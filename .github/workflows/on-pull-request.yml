@@ -17,8 +17,10 @@ jobs:
           pip install -U pip
           pip install -r requirements.txt
       - run: |
-          maturin build -v
-          pip install target/wheels/dantzig-*.whl -v
+          python -m venv .venv
+          source .venv/bin/activate
+          maturin build
+          pip install target/wheels/dantzig-*.whl
           python -c "import dantzig as dz"
       - run: black dantzig tests --check
       - run: isort dantzig tests --check
