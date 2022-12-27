@@ -6,7 +6,7 @@ concurrency:
 
 jobs:
   python-checks:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -17,14 +17,12 @@ jobs:
           pip install -U pip
           pip install -r requirements.txt
       - run: |
-          python -m venv .venv
-          source .venv/bin/activate
           maturin build
           pip install target/wheels/dantzig-*.whl
           python -c "import dantzig as dz"
-      - run: black dantzig tests --check
-      - run: isort dantzig tests --check
-      - run: ruff dantzig tests
+      - run: black python/dantzig tests --check
+      - run: isort python/dantzig tests --check
+      - run: ruff python/dantzig tests
       - run: mypy
       - run: pytest
   rust-checks:
