@@ -66,6 +66,7 @@ soln = Min(x + y - z).st(x + y + z == 1)
 
 ### Road Map
 
+- [ ] Mixed integer linear programing
 - [ ] Built-in support for multidimensional variables and interoperability with `numpy`
 - [ ] More efficient matrix storage, ie. CSR format
 - [ ] Code profiling to identify and resolve performance bottlenecks
