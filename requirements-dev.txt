@@ -1,0 +1,6 @@
+maturin==0.14.7
+black==22.12.0
+isort==5.11.4
+pytest==7.2.0
+mypy==0.991
+ruff==0.0.194

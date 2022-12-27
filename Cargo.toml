@@ -1,0 +1,18 @@
+[package]
+name = "py-dantzig"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.maturin]
+name = "dantzig.rust"
+
+[dependencies]
+pyo3 = { version = "0.17.3", features = ["extension-module", "abi3-py310"] }
+
+[lib]
+name = "rust"
+crate-type = ["cdylib"]
+
+[features]
+default = ["simd"]
+simd = []

@@ -1,0 +1,10 @@
+poetry.lock
+Cargo.lock
+*.so
+/target
+__pycache__
+.python-version
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.idea

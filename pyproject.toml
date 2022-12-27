@@ -1,0 +1,24 @@
+[project]
+name = "dantzig"
+version = "0.1.0"
+description = "A lightweight LP library (LLL)."
+authors = [
+    { name = "Matteo Santamaria", email = "<matteosantama@gmail.com>" }
+]
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["maturin>=0.14,<0.15"]
+build-backend = "maturin"
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+files = ["dantzig", "tests"]
+strict = "true"
+enable_error_code = ["ignore-without-code"]
+
+[[tool.mypy.overrides]]
+module = "dantzig.rust"
+ignore_missing_imports = "true"
