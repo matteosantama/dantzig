@@ -1,0 +1,37 @@
+on: [pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-checks:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: |
+          pip install -U pip
+          pip install -r requirements.txt
+      - run: |
+          maturin build -v
+          pip install target/wheels/dantzig-*.whl -v
+          python -c "import dantzig as dz"
+      - run: black dantzig tests --check
+      - run: isort dantzig tests --check
+      - run: ruff dantzig tests
+      - run: mypy
+      - run: pytest
+  rust-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+         components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+      - run: cargo test
