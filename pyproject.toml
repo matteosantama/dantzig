@@ -3,7 +3,7 @@ name = "dantzig"
 version = "0.1.0"
 description = "A lightweight LP library (LLL)."
 authors = [
-    { name = "Matteo Santamaria", email = "<matteosantama@gmail.com>" }
+    { name = "Matteo Santamaria", email = "matteosantama@gmail.com" }
 ]
 readme = "README.md"
 requires-python = ">=3.10"
