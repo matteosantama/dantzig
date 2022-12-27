@@ -21,7 +21,7 @@ requires = ["maturin>=0.14,<0.15"]
 build-backend = "maturin"
 
 [tool.maturin]
-python-source = "python"
+python-source = "test"
 
 [tool.isort]
 profile = "black"

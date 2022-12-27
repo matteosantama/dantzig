@@ -14,8 +14,7 @@ Dantzig supports
 - SIMD-accelerated linear algebra operations
 - Modern Python type-checking
 
-Dantzig is currently beta software. Please help us improve the library by reporting
-any bugs by opening a GitHub issue. 
+Dantzig is currently beta software. Please help us improve the library by reporting bugs through GitHub issues. 
 
 ### Design Philosophies
 
