@@ -28,6 +28,6 @@ jobs:
       - run: |
           pip install -U pip
           pip install -c requirements.txt maturin
-      - run: |
-          maturin publish -r testpypi --target ${{ matrix.target }} \
+      - run: >
+          maturin publish -r testpypi --target ${{ matrix.target }}
           -u matteosantama -p ${{ secrets.testpypi_password }} --skip-existing
