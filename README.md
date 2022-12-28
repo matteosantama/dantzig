@@ -24,6 +24,8 @@ Dantzig can be installed with pip
 pip install dantzig 
 ```
 
+for Python >=3.10.
+
 ### Design Philosophies
 
 Dantzig prides itself on being both **lightweight** (zero-dependency) and **concise**.
