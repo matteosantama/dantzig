@@ -16,6 +16,14 @@ Dantzig supports
 
 Dantzig is currently beta software. Please help us improve the library by reporting bugs through GitHub issues. 
 
+### Installation
+
+Dantzig can be installed with pip
+
+```shell
+pip install dantzig 
+```
+
 ### Design Philosophies
 
 Dantzig prides itself on being both **lightweight** (zero-dependency) and **concise**.

@@ -1,7 +1,7 @@
 [project]
 name = "dantzig"
 version = "0.1.0"
-description = "A Rust-accelerated linear programming library."
+description = "A Rust-powered linear programming library for Python."
 authors = [
     { name = "Matteo Santamaria", email = "matteosantama@gmail.com" }
 ]
