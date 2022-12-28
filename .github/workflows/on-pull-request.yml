@@ -20,9 +20,9 @@ jobs:
           maturin build
           pip install target/wheels/dantzig-*.whl
           python -c "import dantzig as dz"
-      - run: black python/dantzig tests --check
-      - run: isort python/dantzig tests --check
-      - run: ruff python/dantzig tests
+      - run: black python-source/dantzig tests --check
+      - run: isort python-source/dantzig tests --check
+      - run: ruff python-source/dantzig tests
       - run: mypy
       - run: pytest
   rust-checks:
