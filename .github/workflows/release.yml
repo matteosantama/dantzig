@@ -16,18 +16,18 @@ jobs:
             target: aarch64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-      name: ${{ matrix.target }}
-      runs-on: ${{ matrix.os }}
-      steps:
-        - uses: actions/checkout@v3
-        - uses: actions/setup-python@v4
-          with:
-            python-version: "3.10"
-        - uses: dtolnay/rust-toolchain@nightly
-        - run: rustup target add ${{ matrix.target }}
-        - run: |
-            pip install -U pip
-            pip install -c requirements.txt maturin
-        - run: |
-            maturin publish -r testpypi --target ${{ matrix.target }} \
-            -u matteosantama -p ${{ secrets.testpypi_password }}
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: rustup target add ${{ matrix.target }}
+      - run: |
+          pip install -U pip
+          pip install -c requirements.txt maturin
+      - run: |
+          maturin publish -r testpypi --target ${{ matrix.target }} \
+          -u matteosantama -p ${{ secrets.testpypi_password }}
