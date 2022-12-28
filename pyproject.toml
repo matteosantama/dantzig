@@ -1,7 +1,7 @@
 [project]
 name = "dantzig"
 version = "0.1.0"
-description = "A lightweight LP library (LLL)."
+description = "A Rust-accelerated linear programming library."
 authors = [
     { name = "Matteo Santamaria", email = "matteosantama@gmail.com" }
 ]
@@ -31,7 +31,7 @@ profile = "black"
 known_first_party = ["dantzig"]
 
 [tool.mypy]
-files = ["python/dantzig", "tests"]
+files = ["python-source/dantzig", "tests"]
 strict = "true"
 enable_error_code = ["ignore-without-code"]
 
