@@ -8,9 +8,9 @@ and flexibility of a Python frontend plus the raw computing speed of a Rust back
 
 Dantzig supports
 
-- Both minimization and maximization problems
 - Arbitrarily restricted variables, including completely unrestricted free variables
-- Equality, "less than or equal to", and "greater than or equal to" constraints
+- `==`, `<=`, and `>=` constraints
+- Both minimization and maximization problems
 - SIMD-accelerated linear algebra operations
 - Modern Python type-checking
 
@@ -29,19 +29,18 @@ for Python >=3.10.
 ### Design Philosophies
 
 Dantzig prides itself on being both **lightweight** (zero-dependency) and **concise**.
-The API is designed to be extremely expressive and terse, without sacrificing clarity. 
-To this end, Dantzig provides several short aliases for the most common operations.
+The API is designed to be extremely expressive and terse, saving you keystrokes without 
+sacrificing clarity. To this end, Dantzig provides several short aliases for common
+classes and methods.
 
 A few examples are listed below,
 
 - `Var == Variable`
 - `Min == Minimize`
 - `Max == Maximize`
-- `Var.free() == Var(lb=0.0, ub=0.0)`
-- `Var.nn() == Var.nonneg() == Var(lb=0.0, ub=None)`
-- `Var.np() == Var.nonpos() == Var(lb=None, ub=0.0)`
-
-and you will find more sprinkled throughout the library.
+- `Var.free() == Variable(lb=0.0, ub=0.0)`
+- `Var.nn() == Var.nonneg() == Variable(lb=0.0, ub=None)`
+- `Var.np() == Var.nonpos() == Variable(lb=None, ub=0.0)`
 
 ### Examples
 
@@ -65,9 +64,9 @@ Using aliases, the previous example can alternately be written
 ```python
 from dantzig import Min, Var
 
-x = Var.np()
-y = Var.np()
-z = Var.np()
+x = Var.nn()
+y = Var.nn()
+z = Var.nn()
 
 soln = Min(x + y - z).st(x + y + z == 1)
 ```
