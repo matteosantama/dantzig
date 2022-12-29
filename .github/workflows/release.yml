@@ -32,4 +32,4 @@ jobs:
           pip install -c requirements.txt maturin
       - run: >
           maturin publish --target ${{ matrix.target }} --skip-existing
-          -u matteosantama -p ${{ secrets.pypi_password }} 
+          -u __token__ -p ${{ secrets.pypi_password }} 
