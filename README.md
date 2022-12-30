@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="logo.png" alt="Dantzig logo" width="60%">
+</p>
+
 <h1 align="center">Dantzig: A Rust-powered LP library for Python</h1>
 
 <p align="center">
