@@ -1,4 +1,11 @@
-## Dantzig: A Lightweight, Concise LP Solver
+<h1 align="center">Dantzig: A Rust-powered LP library for Python</h1>
+
+<p align="center">
+    <a href="http://mypy-lang.org/"><img alt="Checked with mypy" src="http://www.mypy-lang.org/static/mypy_badge.svg"></a>
+    <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
+    <a href="https://pycqa.github.io/isort/"><img alt="Imports: isort" src="https://img.shields.io/badge/%20imports-isort-%231674b1?style=flat&labelColor=ef8336"></a>
+    <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-success.svg"></a>
+</p>
 
 Dantzig is a lightweight and concise linear programming solver suitable for small 
 and large-scale problems alike.
@@ -18,13 +25,11 @@ Dantzig is currently beta software. Please help us improve the library by report
 
 ### Installation
 
-Dantzig can be installed with pip
+Dantzig supports Python 3.10+ and can be installed with `pip`.
 
 ```shell
 pip install dantzig 
 ```
-
-for Python >=3.10.
 
 ### Design Philosophies
 
