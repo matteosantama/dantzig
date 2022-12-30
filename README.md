@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="logo.png" alt="Dantzig logo" width="60%">
+    <img src="logo.png" alt="Dantzig logo" width="40%">
 </p>
 
 <h1 align="center">Dantzig: A Rust-powered LP library for Python</h1>
