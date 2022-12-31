@@ -164,14 +164,6 @@ class LinExpr:
     def coefs(self) -> list[float]:
         return list(self.iter_coefs())
 
-    def coef(self, var: Variable) -> float:
-        index = self._linexpr.cipher[var.id]
-        return cast(float, self._linexpr.terms[index][0])
-
-    @property
-    def cipher(self) -> dict[int, int]:
-        return cast("dict[int, int]", self._linexpr.cipher)
-
     @overload
     def __add__(self, rhs: float | int | AffExpr) -> AffExpr:
         ...
@@ -237,9 +229,6 @@ class LinExpr:
 
     def __neg__(self) -> LinExpr:
         return LinExpr.from_rust_linexpr(self._linexpr.__neg__())
-
-    def __contains__(self, item: Variable) -> bool:
-        return item.id in self._linexpr.cipher
 
 
 class AffExpr:
