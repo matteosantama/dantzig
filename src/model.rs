@@ -39,6 +39,11 @@ impl Variable {
     }
 }
 
+struct Sign {
+    pos: Variable,
+    neg: Variable,
+}
+
 #[pyclass(module = "dantzig.rust")]
 #[derive(Clone)]
 pub struct LinExpr {
@@ -116,15 +121,13 @@ impl LinExpr {
         }
     }
 
-    fn decompose_variables(self, decomposition: &HashMap<usize, (Variable, Variable)>) -> Self {
+    fn split(self, signs: &HashMap<usize, Sign>) -> Self {
         let terms = self
             .terms
             .into_iter()
             .flat_map(|(coef, var)| {
-                let (pos_part, neg_part) = decomposition
-                    .get(&var.id)
-                    .expect("Variable missing from decomposition map");
-                [(coef, pos_part.clone()), (-coef, neg_part.clone())]
+                let sign = signs.get(&var.id).expect("Variable missing from sign map");
+                [(coef, sign.pos.clone()), (-coef, sign.neg.clone())]
             })
             .collect();
         Self::new_trusted(terms)
@@ -177,9 +180,9 @@ impl AffExpr {
 }
 
 impl AffExpr {
-    fn decompose_variables(self, decomposition: &HashMap<usize, (Variable, Variable)>) -> Self {
+    fn split(self, signs: &HashMap<usize, Sign>) -> Self {
         Self {
-            linexpr: self.linexpr.decompose_variables(decomposition),
+            linexpr: self.linexpr.split(signs),
             ..self
         }
     }
@@ -221,9 +224,9 @@ impl Constraint {
         Constraint::new(linexpr, constant, false)
     }
 
-    fn decompose_variables(self, decomposition: &HashMap<usize, (Variable, Variable)>) -> Self {
+    fn split(self, signs: &HashMap<usize, Sign>) -> Self {
         Self {
-            linexpr: self.linexpr.decompose_variables(decomposition),
+            linexpr: self.linexpr.split(signs),
             ..self
         }
     }
@@ -251,8 +254,7 @@ pub struct StandardForm {
     objective: AffExpr,
     constraints: Vec<Constraint>,
     positions: HashMap<usize, usize>,
-    /// Mapping from Variable.id to positive and negative part variables
-    decomposition: HashMap<usize, (Variable, Variable)>,
+    signs: HashMap<usize, Sign>,
 }
 
 impl StandardForm {
@@ -272,38 +274,38 @@ impl StandardForm {
             .flatten();
 
         let mut extra_constraints = Vec::new();
-        let mut decomposition = HashMap::new();
+        let mut signs = HashMap::new();
 
         for (_, var) in terms {
-            if let Entry::Vacant(e) = decomposition.entry(var.id) {
+            if let Entry::Vacant(e) = signs.entry(var.id) {
                 // TODO: We don't need to necessarily map every variable to two new ones;
                 //  for example, we can avoid making "negative parts" for variables that are
                 //  non-negative.
-                let pos_part = Variable::standard();
-                let neg_part = Variable::standard();
+                let pos = Variable::standard();
+                let neg = Variable::standard();
 
                 if let Some(ub) = var.ub {
                     let constraint = Constraint::new_inequality_trusted(
-                        &[(1.0, pos_part.clone()), (-1.0, neg_part.clone())],
+                        &[(1.0, pos.clone()), (-1.0, neg.clone())],
                         ub,
                     );
                     extra_constraints.push(constraint);
                 }
                 if let Some(lb) = var.lb {
                     let constraint = Constraint::new_inequality_trusted(
-                        &[(1.0, neg_part.clone()), (-1.0, pos_part.clone())],
+                        &[(1.0, neg.clone()), (-1.0, pos.clone())],
                         -lb,
                     );
                     extra_constraints.push(constraint);
                 }
-                e.insert((pos_part, neg_part));
+                e.insert(Sign { pos, neg });
             }
         }
 
-        let objective = objective.decompose_variables(&decomposition);
+        let objective = objective.split(&signs);
         let constraints = constraints
             .into_iter()
-            .map(|c| c.decompose_variables(&decomposition))
+            .map(|c| c.split(&signs))
             .into_iter()
             .chain(extra_constraints)
             .collect::<Vec<Constraint>>();
@@ -339,7 +341,7 @@ impl StandardForm {
             objective,
             constraints,
             positions,
-            decomposition,
+            signs,
         }
     }
 
@@ -352,10 +354,10 @@ impl StandardForm {
             let mut positions = HashMap::new();
             let mut x_new = Vec::new();
 
-            for (id, (pos_part, neg_part)) in self.decomposition {
-                let pos_part_val = x[self.positions[&pos_part.id]];
-                let neg_part_val = x[self.positions[&neg_part.id]];
-                x_new.push(pos_part_val - neg_part_val);
+            for (id, sign) in self.signs {
+                let pos = x[self.positions[&sign.pos.id]];
+                let neg = x[self.positions[&sign.neg.id]];
+                x_new.push(pos - neg);
                 positions.insert(id, positions.len());
             }
 
