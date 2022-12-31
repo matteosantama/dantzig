@@ -306,7 +306,6 @@ impl StandardForm {
         let constraints = constraints
             .into_iter()
             .map(|c| c.split(&signs))
-            .into_iter()
             .chain(extra_constraints)
             .collect::<Vec<Constraint>>();
 
