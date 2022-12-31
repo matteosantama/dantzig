@@ -42,36 +42,34 @@ impl Variable {
 #[pyclass(module = "dantzig.rust")]
 #[derive(Clone)]
 pub struct LinExpr {
-    /// An ordered sequence of Variable (coefficient, ID).
     #[pyo3(get)]
     terms: Vec<(f64, Variable)>,
-    /// A mapping from Variable ID to position within LinExpr.terms
     #[pyo3(get)]
-    cipher: HashMap<usize, usize>,
+    positions: HashMap<usize, usize>,
 }
 
 #[pymethods]
 impl LinExpr {
     #[classmethod]
     fn py_reduce(_: &PyType, terms: Vec<(f64, Variable)>) -> Self {
-        let mut cipher = HashMap::new();
+        let mut positions = HashMap::new();
         let mut consolidated_terms = Vec::new();
 
         for (coef, var) in terms.iter().cloned() {
             let id = var.id;
-            let len = cipher.len();
-            if let Entry::Vacant(e) = cipher.entry(id) {
+            let len = positions.len();
+            if let Entry::Vacant(e) = positions.entry(id) {
                 e.insert(len);
                 consolidated_terms.push((coef, var))
             } else {
-                let (prev_coef, _) = consolidated_terms[cipher[&id]];
-                consolidated_terms[cipher[&id]] = (prev_coef + coef, var)
+                let (prev_coef, _) = consolidated_terms[positions[&id]];
+                consolidated_terms[positions[&id]] = (prev_coef + coef, var)
             }
         }
 
         Self {
             terms: consolidated_terms,
-            cipher,
+            positions,
         }
     }
 
@@ -88,7 +86,7 @@ impl LinExpr {
                 .cloned()
                 .map(|(coef, var)| (-coef, var))
                 .collect(),
-            cipher: self.cipher.clone(),
+            positions: self.positions.clone(),
         }
     }
 
@@ -100,21 +98,21 @@ impl LinExpr {
                 .cloned()
                 .map(|(coef, var)| (rhs * coef, var))
                 .collect(),
-            cipher: self.cipher.clone(),
+            positions: self.positions.clone(),
         }
     }
 }
 
 impl LinExpr {
     fn new_trusted(terms: Vec<(f64, Variable)>) -> Self {
-        let cipher = terms
+        let positions = terms
             .iter()
             .enumerate()
             .map(|(i, term)| (term.1.id, i))
             .collect();
         Self {
             terms: terms.to_vec(),
-            cipher,
+            positions,
         }
     }
 
@@ -132,11 +130,11 @@ impl LinExpr {
         Self::new_trusted(terms)
     }
 
-    fn align_to_cipher(&self, cipher: &HashMap<usize, usize>, variables: &[Variable]) -> Self {
+    fn align(self, positions: &HashMap<usize, usize>, variables: &[Variable]) -> Self {
         let terms = variables
             .iter()
             .cloned()
-            .map(|var| match self.cipher.get(&var.id) {
+            .map(|var| match self.positions.get(&var.id) {
                 None => 0.0,
                 Some(&j) => self.terms[j].0,
             })
@@ -145,7 +143,7 @@ impl LinExpr {
 
         Self {
             terms,
-            cipher: cipher.clone(),
+            positions: positions.clone(),
         }
     }
 
@@ -155,7 +153,7 @@ impl LinExpr {
 
     fn inject_slack_variable(mut self) -> Self {
         let variable = Variable::standard();
-        self.cipher.insert(variable.id, self.cipher.len());
+        self.positions.insert(variable.id, self.positions.len());
         self.terms.push((1.0, variable));
         self
     }
@@ -186,9 +184,9 @@ impl AffExpr {
         }
     }
 
-    fn align_to_cipher(self, cipher: &HashMap<usize, usize>, variables: &[Variable]) -> Self {
+    fn align(self, positions: &HashMap<usize, usize>, variables: &[Variable]) -> Self {
         Self {
-            linexpr: self.linexpr.align_to_cipher(cipher, variables),
+            linexpr: self.linexpr.align(positions, variables),
             ..self
         }
     }
@@ -230,10 +228,10 @@ impl Constraint {
         }
     }
 
-    fn align_to_cipher(&self, cipher: &HashMap<usize, usize>, variables: &[Variable]) -> Self {
+    fn align(self, positions: &HashMap<usize, usize>, variables: &[Variable]) -> Self {
         Self {
-            linexpr: self.linexpr.align_to_cipher(cipher, variables),
-            ..*self
+            linexpr: self.linexpr.align(positions, variables),
+            ..self
         }
     }
 
@@ -252,7 +250,7 @@ impl Constraint {
 pub struct StandardForm {
     objective: AffExpr,
     constraints: Vec<Constraint>,
-    cipher: HashMap<usize, usize>,
+    positions: HashMap<usize, usize>,
     /// Mapping from Variable.id to positive and negative part variables
     decomposition: HashMap<usize, (Variable, Variable)>,
 }
@@ -315,7 +313,7 @@ impl StandardForm {
             .map(|constraint| constraint.slacken())
             .collect::<Vec<Constraint>>();
 
-        let mut cipher = HashMap::new();
+        let mut positions = HashMap::new();
         let mut variables = Vec::new();
 
         let iter =
@@ -323,24 +321,24 @@ impl StandardForm {
 
         for linexpr in iter {
             for (_, var) in linexpr.terms {
-                let len = cipher.len();
-                if let Entry::Vacant(e) = cipher.entry(var.id) {
+                let len = positions.len();
+                if let Entry::Vacant(e) = positions.entry(var.id) {
                     e.insert(len);
                     variables.push(var);
                 }
             }
         }
 
-        let objective = objective.align_to_cipher(&cipher, &variables);
+        let objective = objective.align(&positions, &variables);
         let constraints = constraints
-            .iter()
-            .map(|c| c.align_to_cipher(&cipher, &variables))
+            .into_iter()
+            .map(|c| c.align(&positions, &variables))
             .collect::<Vec<Constraint>>();
 
         Self {
             objective,
             constraints,
-            cipher,
+            positions,
             decomposition,
         }
     }
@@ -351,20 +349,20 @@ impl StandardForm {
         let rhs = self.constraints.iter().map(|x| x.constant).collect();
 
         simplex::solve(objective, constraints, rhs).map(|(objective_value, x)| {
-            let mut cipher = HashMap::new();
+            let mut positions = HashMap::new();
             let mut x_new = Vec::new();
 
             for (id, (pos_part, neg_part)) in self.decomposition {
-                let pos_part_val = x[self.cipher[&pos_part.id]];
-                let neg_part_val = x[self.cipher[&neg_part.id]];
+                let pos_part_val = x[self.positions[&pos_part.id]];
+                let neg_part_val = x[self.positions[&neg_part.id]];
                 x_new.push(pos_part_val - neg_part_val);
-                cipher.insert(id, cipher.len());
+                positions.insert(id, positions.len());
             }
 
             Solution {
                 objective_value: objective_value + self.objective.constant,
                 x: x_new,
-                cipher,
+                positions,
             }
         })
     }
@@ -377,12 +375,12 @@ pub struct Solution {
     #[pyo3(get)]
     x: Vec<f64>,
     #[pyo3(get)]
-    cipher: HashMap<usize, usize>,
+    positions: HashMap<usize, usize>,
 }
 
 #[pymethods]
 impl Solution {
     fn __getitem__(&self, variable: &Variable) -> f64 {
-        self.x[self.cipher[&variable.id]]
+        self.x[self.positions[&variable.id]]
     }
 }
