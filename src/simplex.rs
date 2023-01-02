@@ -16,7 +16,10 @@ pub fn solve(
     let constraint_matrix = Matrix::new_unchecked(constraints);
 
     if constraint_matrix.is_empty() {
-        assert!(rhs.is_empty());
+        assert!(
+            rhs.is_empty(),
+            "rhs provided, but no accompanying constraints"
+        );
         return match objective.iter().all(|&x| x > 0.0) {
             true => Ok((0.0, vec![0.0; objective.len()])),
             false => Err(Error::Unbounded),
@@ -29,9 +32,9 @@ pub fn solve(
 
     // NOTE: The auxiliary problem is trivially bounded and feasible, so we
     // should not encounter an error here.
-    let (objective_value, _) = aux
-        .solve()
-        .expect("Failed solving auxiliary problem; please report as a bug");
+    let (objective_value, _) = aux.solve().expect(
+        "Failed solving auxiliary problem; please help us improve the library by opening a bug report",
+    );
 
     check_feasibility(objective_value)?;
 
@@ -299,5 +302,23 @@ mod tests {
 
         let result = solve(objective, constraints, rhs);
         assert_eq!(result.unwrap_err(), Error::Unbounded)
+    }
+
+    #[test]
+    fn test_solve_5() {
+        let objective = vec![-3.0, 3.0, -0.9, 0.9, -4.0, 4.0, 1.5, -1.5, 0.0, 0.0, 0.0];
+        let constraints = vec![
+            vec![3.5, -3.5, 1.0, -1.0, 2.5, -2.5, 9.0, -9.0, 1.0, 0.0, 0.0],
+            vec![4.0, -4.0, 2.0, -2.0, 7.0, -7.0, 3.0, -3.0, 0.0, 1.0, 0.0],
+            vec![1.0, -1.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        ];
+        let rhs = vec![1.2, 12.0, 1.0];
+
+        let (objective_value, x) = solve(objective, constraints, rhs).unwrap();
+        assert_eq!(objective_value, -7.571428571428572);
+        assert_eq!(x[0] - x[1], 1.0);
+        assert_eq!(x[2] - x[3], 0.0);
+        assert_eq!(x[4] - x[5], 1.142857142857143);
+        assert_eq!(x[6] - x[7], 0.0);
     }
 }

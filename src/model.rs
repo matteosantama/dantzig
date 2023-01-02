@@ -45,7 +45,7 @@ struct Sign {
 }
 
 #[pyclass(module = "dantzig.rust")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LinExpr {
     #[pyo3(get)]
     terms: Vec<(f64, Variable)>,
@@ -163,7 +163,7 @@ impl LinExpr {
 }
 
 #[pyclass(module = "dantzig.rust")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AffExpr {
     #[pyo3(get)]
     linexpr: LinExpr,
@@ -196,7 +196,7 @@ impl AffExpr {
 }
 
 #[pyclass(module = "dantzig.rust")]
-#[derive(FromPyObject)]
+#[derive(Clone, Debug)]
 pub struct Constraint {
     #[pyo3(get)]
     linexpr: LinExpr,
