@@ -1,8 +1,10 @@
 #![feature(portable_simd, array_chunks)]
 mod error;
 mod linalg;
+mod linalg2;
 mod model;
 mod simplex;
+mod simplex2;
 
 use error::Error;
 use model::{AffExpr, Constraint, LinExpr, Solution, StandardForm, Variable};
