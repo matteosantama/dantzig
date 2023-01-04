@@ -9,14 +9,14 @@ pub(crate) fn lu_solve_t(a: &CscMatrix, b: Vec<f64>) -> Vec<f64> {
 }
 
 /// Dense matrix with row-major order
-struct Matrix {
+pub(crate) struct Matrix {
     nrows: usize,
     ncols: usize,
     data: Vec<f64>,
 }
 
 impl Matrix {
-    fn to_sparse(&self) -> CscMatrix {
+    pub(crate) fn to_sparse(&self) -> CscMatrix {
         CscMatrix::from(self)
     }
 
@@ -26,6 +26,14 @@ impl Matrix {
             ncols,
             data: vec![0.0; nrows * ncols],
         }
+    }
+
+    pub(crate) fn coords(nrows: usize, ncols: usize, coords: &[(usize, usize, f64)]) -> Self {
+        let mut data = Self::zero(nrows, ncols);
+        for (i, j, val) in coords {
+            *data.at_mut(*i, *j) = *val;
+        }
+        data
     }
 }
 
@@ -150,7 +158,7 @@ impl CscMatrix {
 
     pub(crate) fn collect_columns(&self, cols: &[usize]) -> Self {
         let cols = cols.iter().map(|j| self.column(*j)).collect::<Vec<_>>();
-        Self::from_cols(self.nrows, cols.len(), &cols)
+        Self::from_col_major(self.nrows, cols.len(), &cols)
     }
 
     pub(crate) fn nrows(&self) -> usize {
@@ -186,7 +194,7 @@ impl CscMatrix {
         }
     }
 
-    fn from_cols(nrows: usize, ncols: usize, cols: &[Vec<f64>]) -> Self {
+    fn from_col_major(nrows: usize, ncols: usize, cols: &[Vec<f64>]) -> Self {
         assert_eq!(ncols, cols.len());
         let mut sparse = Self::new(nrows, ncols);
 
@@ -397,8 +405,9 @@ mod tests {
         let sparse = Matrix {
             nrows: 3,
             ncols: 4,
-            data: (0..12).map(|x| x as f64).collect()
-        }.to_sparse();
+            data: (0..12).map(|x| x as f64).collect(),
+        }
+        .to_sparse();
         let v = vec![1.0, 2.0, 3.0];
         let result = sparse.neg_t_dot(v);
         assert_eq!(result, &[-32.0, -38.0, -44.0, -50.0]);
