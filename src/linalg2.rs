@@ -1,7 +1,5 @@
-use std::mem::swap;
-
-pub(crate) fn lu_solve() -> Result<Vec<f64>, ()> {
-    todo!()
+pub(crate) fn lu_solve(a: &CooMatrix, b: Vec<f64>) -> Vec<f64> {
+    a.to_dense().factorize().solve(b)
 }
 
 /// Dense matrix with row-major order
@@ -11,16 +9,20 @@ struct Matrix {
     data: Vec<f64>,
 }
 
-impl From<&CscMatrix> for Matrix {
-    fn from(csc: &CscMatrix) -> Self {
-        let nrows = csc.nrows();
-        let ncols = csc.ncols();
+impl Matrix {
+    fn to_sparse(&self) -> CooMatrix {
+        CooMatrix::from(self)
+    }
+}
+
+impl From<&CooMatrix> for Matrix {
+    fn from(coo: &CooMatrix) -> Self {
+        let nrows = coo.nrows;
+        let ncols = coo.ncols;
 
         let mut data = vec![0.0; nrows * ncols];
-        for j in 0..ncols {
-            for (i, val) in csc.column(j) {
-                data[i * ncols + j] = *val
-            }
+        for (i, j, val) in &coo.data {
+            data[i * ncols + j] = *val
         }
         Self { nrows, ncols, data }
     }
@@ -44,15 +46,15 @@ impl Matrix {
     }
 
     fn at(&self, i: usize, j: usize) -> &f64 {
-        &self.data[i * self.ncols + j]
+        &self.data[self.raw_index(i, j)]
     }
 
     fn at_mut(&mut self, i: usize, j: usize) -> &mut f64 {
         &mut self.data[i * self.ncols + j]
     }
 
-    fn partial_row_swap(&mut self, mu: usize, k: usize) {
-        todo!()
+    fn raw_index(&self, i: usize, j: usize) -> usize {
+        i * self.ncols + j
     }
 
     /// Perform in-place LU decomposition.
@@ -79,10 +81,9 @@ impl Matrix {
             }
 
             for j in k..n {
-                let x = *self.at(mu, j);
-                let y = *self.at(k, j);
-                *self.at_mut(mu, j) = y;
-                *self.at_mut(k, j) = x;
+                let x = self.raw_index(mu, j);
+                let y = self.raw_index(k, j);
+                self.data.swap(x, y);
             }
             p.push(mu);
 
@@ -101,95 +102,71 @@ impl Matrix {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct CscMatrix {
-    col_ptr: Vec<usize>,
-    row_idx: Vec<usize>,
-    data: Vec<f64>,
+/// Coordinate list format
+pub(crate) struct CooMatrix {
+    nrows: usize,
+    ncols: usize,
+    data: Vec<(usize, usize, f64)>,
 }
 
-impl CscMatrix {
-    /// Supply matrix entries by (row, column, value).
-    fn from_coordinates(coords: &[(usize, usize, f64)]) -> Self {
-        assert!(!coords.is_empty(), "must provide coordinates");
+impl CooMatrix {
+    fn to_dense(&self) -> Matrix {
+        Matrix::from(self)
+    }
+}
 
-        let mut owned = coords.to_vec();
-        owned.sort_by(|a, b| (a.1, a.0).cmp(&(b.1, b.0)));
-
-        let capacity = owned.len();
-
-        let mut col_ptr = Vec::with_capacity(capacity);
-        let mut row_idx = Vec::with_capacity(capacity);
-        let mut data = Vec::with_capacity(capacity);
-
-        let mut opt_prev_col = None;
-        for (row, col, val) in owned {
-            if let Some(prev) = opt_prev_col {
-                if col != prev {
-                    col_ptr.push(data.len());
-                    opt_prev_col = Some(col)
-                }
-            } else {
-                col_ptr.push(data.len());
-                opt_prev_col = Some(0);
+impl From<&Matrix> for CooMatrix {
+    fn from(dense: &Matrix) -> Self {
+        assert!(dense.nrows > 0);
+        assert!(dense.ncols > 0);
+        let mut data = vec![];
+        let mut i = 0;
+        let mut j = 0;
+        for val in &dense.data {
+            if *val != 0.0 {
+                data.push((i, j, *val))
             }
-            row_idx.push(row);
-            data.push(val);
-        }
-        col_ptr.push(data.len());
-
-        row_idx.shrink_to_fit();
-        col_ptr.shrink_to_fit();
-
+            j += 1;
+            if j == dense.ncols {
+                j = 0;
+                i += 1;
+            }
+        };
         Self {
-            col_ptr,
-            row_idx,
+            nrows: dense.nrows,
+            ncols: dense.ncols,
             data,
         }
     }
-
-    fn nrows(&self) -> usize {
-        self.row_idx.iter().cloned().max().unwrap_or(0)
-    }
-
-    fn ncols(&self) -> usize {
-        self.col_ptr.len() - 1
-    }
-
-    fn nnz(&self) -> usize {
-        self.data.len()
-    }
-
-    fn at(&self, i: usize, j: usize) -> f64 {
-        self.column(j)
-            .find(|(row, _)| *row == i)
-            .map(|(_, &e)| e)
-            .unwrap_or(0.0)
-    }
-
-    fn row_slice(&self, j: usize) -> &[usize] {
-        &self.row_idx[self.col_ptr[j]..self.col_ptr[j + 1]]
-    }
-
-    fn data_slice(&self, j: usize) -> &[f64] {
-        &self.data[self.col_ptr[j]..self.col_ptr[j + 1]]
-    }
-
-    fn column(&self, j: usize) -> impl Iterator<Item = (usize, &f64)> {
-        self.row_slice(j).iter().cloned().zip(self.data_slice(j))
-    }
-
-    // fn column_mut(&self, j: usize) -> impl Iterator<Item = (usize, &mut f64)> {
-    //     self.row_slice(j)
-    //         .iter()
-    //         .cloned()
-    //         .zip(self.data_slice(j).iter_mut())
-    // }
 }
 
 struct LU {
     p: Vec<usize>,
     matrix: Matrix,
+}
+
+impl LU {
+    /// Solve `self * x = b` for `x`.
+    ///
+    /// Golub, G., & Van Loan, C. (1996). Matrix Computations.
+    /// The Johns Hopkins University Press.
+    fn solve(&self, mut b: Vec<f64>) -> Vec<f64> {
+        assert_eq!(self.matrix.ncols, b.len());
+        let n = b.len();
+        for k in 0..n - 1 {
+            b.swap(k, self.p[k]);
+            for i in k + 1..n {
+                b[i] -= b[k] * self.matrix.at(i, k)
+            }
+        }
+        for i in (0..self.matrix.nrows - 1).rev() {
+            for j in i + 1..self.matrix.ncols {
+                b[i] -= self.matrix.at(i, j) * b[j];
+            }
+            b[i] /= self.matrix.at(i, i)
+        }
+        b
+    }
 }
 
 #[cfg(test)]
@@ -237,22 +214,29 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn test_csc_from_coordinates() {
-    //     // Example taken from https://scipy-lectures.org/advanced/scipy_sparse/csc_matrix.html
-    //     let csc = CscMatrix::from_coordinates(&[
-    //         (0, 0, 1.0),
-    //         (0, 2, 2.0),
-    //         (1, 2, 3.0),
-    //         (2, 0, 4.0),
-    //         (2, 1, 5.0),
-    //         (2, 2, 6.0),
-    //     ]);
-    //     assert_eq!(csc.data, &[1.0, 4.0, 5.0, 2.0, 3.0, 6.0]);
-    //     assert_eq!(csc.row_idx, &[0, 2, 2, 0, 1, 2]);
-    //     assert_eq!(csc.col_ptr, &[0, 2, 3, 6]);
-    //     assert_eq!(csc.nrows(), 3);
-    //     assert_eq!(csc.ncols(), 3);
-    //     assert_eq!(csc.nnz(), 6);
-    // }
+    #[test]
+    fn test_matrix_roundtrip() {
+        let matrix = Matrix {
+            nrows: 2,
+            ncols: 2,
+            data: vec![0.0, 1.0, 0.0, 2.0],
+        };
+        let result = matrix.to_sparse().to_dense();
+        assert_eq!(result.nrows, 2);
+        assert_eq!(result.ncols, 2);
+        assert_eq!(result.data, &[0.0, 1.0, 0.0, 2.0]);
+    }
+
+    #[test]
+    fn test_lu_solve() {
+        let a = Matrix {
+            nrows: 3,
+            ncols: 3,
+            data: vec![6.0, 18.0, 3.0, 2.0, 12.0, 1.0, 4.0, 15.0, 3.0],
+        }
+        .to_sparse();
+        let b = vec![3.0, 19.0, 0.0];
+        let result = lu_solve(&a, b);
+        assert_eq!(result, &[-3.0, 3.0, -11.0])
+    }
 }
