@@ -1,5 +1,11 @@
-pub(crate) fn lu_solve(a: &CooMatrix, b: Vec<f64>) -> Vec<f64> {
+/// Solve the equation `a * x = b` for `x` with an LU factorization.
+pub(crate) fn lu_solve(a: &CscMatrix, b: Vec<f64>) -> Vec<f64> {
     a.to_dense().factorize().solve(b)
+}
+
+/// Solve the equation `a.t() * x = b` for `x` with an LU factorization.
+pub(crate) fn lu_solve_t(a: &CscMatrix, b: Vec<f64>) -> Vec<f64> {
+    a.to_dense().t().factorize().solve(b)
 }
 
 /// Dense matrix with row-major order
@@ -10,21 +16,27 @@ struct Matrix {
 }
 
 impl Matrix {
-    fn to_sparse(&self) -> CooMatrix {
-        CooMatrix::from(self)
+    fn to_sparse(&self) -> CscMatrix {
+        CscMatrix::from(self)
+    }
+
+    fn zero(nrows: usize, ncols: usize) -> Self {
+        Self {
+            nrows,
+            ncols,
+            data: vec![0.0; nrows * ncols],
+        }
     }
 }
 
-impl From<&CooMatrix> for Matrix {
-    fn from(coo: &CooMatrix) -> Self {
-        let nrows = coo.nrows;
-        let ncols = coo.ncols;
+impl From<&CscMatrix> for Matrix {
+    fn from(sparse: &CscMatrix) -> Self {
+        let mut dense = Matrix::zero(sparse.nrows, sparse.ncols);
 
-        let mut data = vec![0.0; nrows * ncols];
-        for (i, j, val) in &coo.data {
-            data[i * ncols + j] = *val
+        for (i, j, val) in sparse.iter() {
+            *dense.at_mut(i, j) = *val
         }
-        Self { nrows, ncols, data }
+        dense
     }
 }
 
@@ -59,8 +71,10 @@ impl Matrix {
 
     /// Perform in-place LU decomposition.
     ///
-    /// Golub, G., & Van Loan, C. (1996). Matrix Computations.
-    /// The Johns Hopkins University Press.
+    /// The resulting dense matrix encodes both the the L (lower) and U (upper) factors.
+    ///
+    /// See Golub, G., & Van Loan, C. (1996). Matrix Computations. The Johns Hopkins University Press
+    /// for further details.
     fn factorize(mut self) -> LU {
         assert_eq!(
             self.nrows, self.ncols,
@@ -100,51 +114,128 @@ impl Matrix {
         }
         LU { p, matrix: self }
     }
+
+    fn t(&self) -> Self {
+        let mut data = Vec::with_capacity(self.nrows * self.ncols);
+        for j in 0..self.ncols {
+            for i in 0..self.nrows {
+                data.push(*self.at(i, j));
+            }
+        }
+        Self {
+            nrows: self.ncols,
+            ncols: self.nrows,
+            data,
+        }
+    }
 }
 
-/// Coordinate list format
-pub(crate) struct CooMatrix {
+/// Sparse matrix in CSC (Compressed Sparse Column) format
+pub(crate) struct CscMatrix {
     nrows: usize,
     ncols: usize,
-    data: Vec<(usize, usize, f64)>,
+    row_idx: Vec<usize>,
+    col_ptr: Vec<usize>,
+    data: Vec<f64>,
 }
 
-impl CooMatrix {
+impl CscMatrix {
     pub(crate) fn column(&self, j: usize) -> Vec<f64> {
-        todo!()
+        let mut col = vec![0.0; self.nrows];
+        for (i, val) in self.column_iter(j) {
+            col[i] = *val
+        }
+        col
     }
 
     pub(crate) fn collect_columns(&self, cols: &[usize]) -> Self {
-        todo!()
+        let cols = cols.iter().map(|j| self.column(*j)).collect::<Vec<_>>();
+        Self::from_cols(self.nrows, cols.len(), &cols)
+    }
+
+    pub(crate) fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    pub(crate) fn ncols(&self) -> usize {
+        self.ncols
+    }
+
+    /// An efficient utility function for computing -self^T *  v.
+    ///
+    /// A CSC matrix has efficient column access, so rather than compute
+    /// -self^T * v, it is easier to compute -v^T *self if we don't care
+    /// about the orientation of the resulting vector.
+    pub(crate) fn neg_t_dot(&self, v: Vec<f64>) -> Vec<f64> {
+        assert_eq!(self.nrows, v.len());
+        let mut result = Vec::with_capacity(v.len());
+        for j in 0..self.ncols {
+            let x = self.column_iter(j).map(|(i, val)| *val * -v[i]).sum();
+            result.push(x);
+        }
+        result
+    }
+
+    fn new(nrows: usize, ncols: usize) -> CscMatrix {
+        Self {
+            nrows,
+            ncols,
+            row_idx: vec![],
+            col_ptr: vec![0],
+            data: vec![],
+        }
+    }
+
+    fn from_cols(nrows: usize, ncols: usize, cols: &[Vec<f64>]) -> Self {
+        assert_eq!(ncols, cols.len());
+        let mut sparse = Self::new(nrows, ncols);
+
+        for col in cols.iter() {
+            assert_eq!(nrows, col.len());
+            for (i, val) in col.iter().enumerate() {
+                if *val != 0.0 {
+                    sparse.row_idx.push(i);
+                    sparse.data.push(*val);
+                }
+            }
+            sparse.col_ptr.push(sparse.data.len());
+        }
+        sparse
     }
 
     fn to_dense(&self) -> Matrix {
         Matrix::from(self)
     }
+
+    /// Iterate over the non-zero entries of the j'th column, yielding the row index and value.
+    fn column_iter(&self, j: usize) -> impl Iterator<Item = (usize, &f64)> {
+        self.row_idx[self.col_ptr[j]..self.col_ptr[j + 1]]
+            .iter()
+            .cloned()
+            .zip(self.data[self.col_ptr[j]..self.col_ptr[j + 1]].iter())
+    }
+
+    /// Iterate over the non-zero values of the matrix, providing their (row, col) index too.
+    fn iter(&self) -> impl Iterator<Item = (usize, usize, &f64)> {
+        (0..self.ncols).flat_map(|j| self.column_iter(j).map(move |(i, val)| (i, j, val)))
+    }
 }
 
-impl From<&Matrix> for CooMatrix {
+impl From<&Matrix> for CscMatrix {
     fn from(dense: &Matrix) -> Self {
-        assert!(dense.nrows > 0);
-        assert!(dense.ncols > 0);
-        let mut data = vec![];
-        let mut i = 0;
-        let mut j = 0;
-        for val in &dense.data {
-            if *val != 0.0 {
-                data.push((i, j, *val))
+        let mut sparse = CscMatrix::new(dense.nrows, dense.ncols);
+
+        for j in 0..dense.ncols {
+            for i in 0..dense.nrows {
+                let val = dense.at(i, j);
+                if *val != 0.0 {
+                    sparse.row_idx.push(i);
+                    sparse.data.push(*val);
+                }
             }
-            j += 1;
-            if j == dense.ncols {
-                j = 0;
-                i += 1;
-            }
+            sparse.col_ptr.push(sparse.data.len());
         }
-        Self {
-            nrows: dense.nrows,
-            ncols: dense.ncols,
-            data,
-        }
+        sparse
     }
 }
 
@@ -246,5 +337,70 @@ mod tests {
         let b = vec![3.0, 19.0, 0.0];
         let result = lu_solve(&a, b);
         assert_eq!(result, &[-3.0, 3.0, -11.0])
+    }
+
+    #[test]
+    fn test_csc_from_dense() {
+        let sparse = Matrix {
+            nrows: 3,
+            ncols: 3,
+            data: vec![1.0, 0.0, 2.0, 0.0, 0.0, 3.0, 4.0, 5.0, 6.0],
+        }
+        .to_sparse();
+        assert_eq!(sparse.row_idx, &[0, 2, 2, 0, 1, 2]);
+        assert_eq!(sparse.col_ptr, &[0, 2, 3, 6]);
+        assert_eq!(sparse.data, &[1.0, 4.0, 5.0, 2.0, 3.0, 6.0])
+    }
+
+    #[test]
+    fn test_csc_column() {
+        let sparse = Matrix {
+            nrows: 3,
+            ncols: 3,
+            data: vec![1.0, 0.0, 2.0, 0.0, 0.0, 3.0, 4.0, 5.0, 6.0],
+        }
+        .to_sparse();
+        assert_eq!(sparse.column(0), &[1.0, 0.0, 4.0]);
+        assert_eq!(sparse.column(1), &[0.0, 0.0, 5.0]);
+        assert_eq!(sparse.column(2), &[2.0, 3.0, 6.0]);
+    }
+
+    #[test]
+    fn test_csc_collect_columns() {
+        let sparse = Matrix {
+            nrows: 3,
+            ncols: 3,
+            data: vec![1.0, 0.0, 2.0, 0.0, 0.0, 3.0, 4.0, 5.0, 6.0],
+        }
+        .to_sparse();
+        let cols = &[1, 2, 0];
+        let result = sparse.collect_columns(cols);
+        assert_eq!(sparse.column(0), result.column(2));
+        assert_eq!(sparse.column(1), result.column(0));
+        assert_eq!(sparse.column(2), result.column(1));
+    }
+
+    #[test]
+    fn test_dense_transpose() {
+        let result = Matrix {
+            nrows: 2,
+            ncols: 2,
+            data: vec![1.0, 2.0, 3.0, 4.0],
+        }
+        .t();
+        assert_eq!(result.column(0).cloned().collect::<Vec<_>>(), &[1.0, 2.0]);
+        assert_eq!(result.column(1).cloned().collect::<Vec<_>>(), &[3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_neg_transpose_dot() {
+        let sparse = Matrix {
+            nrows: 3,
+            ncols: 4,
+            data: (0..12).map(|x| x as f64).collect()
+        }.to_sparse();
+        let v = vec![1.0, 2.0, 3.0];
+        let result = sparse.neg_t_dot(v);
+        assert_eq!(result, &[-32.0, -38.0, -44.0, -50.0]);
     }
 }

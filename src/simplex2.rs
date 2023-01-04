@@ -1,5 +1,4 @@
-use crate::linalg2::{CooMatrix, lu_solve};
-use std::collections::HashMap;
+use crate::linalg2::{lu_solve, lu_solve_t, CscMatrix};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -40,7 +39,7 @@ enum Error {
 /// https://dl.icdst.org/pdfs/files3/faa54c1f53965a11b03f9a13b023f9b2.pdf
 struct Simplex {
     objective: Vec<f64>,
-    constraints: CooMatrix,
+    constraints: CscMatrix,
 
     // Indices of the basic and non-basic variables, respectively.
     b: Vec<usize>,
@@ -57,18 +56,19 @@ impl Simplex {
         todo!()
     }
 
-    fn basis_matrix(&self) -> CooMatrix {
-        self.constraints.collect_columns(&self.b)
-    }
-
-    fn solve_for_dx(&self, j: usize) -> Vec<f64> {
-        let a = self.basis_matrix();
+    fn solve_for_dx(&self, j: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
         let b = self.constraints.column(j);
-        lu_solve(&a, b)
+        lu_solve(basis_matrix, b)
     }
 
-    fn solve_for_dz(&self, i: usize) -> Vec<f64> {
-        todo!()
+    fn solve_for_dz(&self, i: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
+        let e = (0..basis_matrix.nrows())
+            .map(|k| (k == i) as u8 as f64)
+            .collect::<Vec<_>>();
+        let v = lu_solve_t(basis_matrix, e);
+        self.constraints
+            .collect_columns(&self.n)
+            .neg_t_dot(v)
     }
 
     fn swap(&mut self, enter: usize, exit: usize) {
@@ -80,17 +80,17 @@ impl Simplex {
 
     fn run_primal_simplex(&mut self) -> Result<(), Error> {
         while let Some(j) = try_pick_enter(&self.n, &self.z) {
-            let dx = self.solve_for_dx(j);
-            let i = pick_exit(&self.b, &dx, &self.x);
-            let dz = self.solve_for_dz(i);
+            let basis_matrix = self.constraints.collect_columns(&self.b);
 
-            self.swap(j, i);
+            let dx = self.solve_for_dx(j, &basis_matrix);
+            let i = pick_exit(&self.b, &dx, &self.x);
+            let dz = self.solve_for_dz(i, &basis_matrix);
 
             let t = self.x[i] / dx[i];
             assert!(!t.is_nan(), "t is NaN");
             assert!(!t.is_infinite(), "t is infinite");
             if t < 0.0 {
-                return Err(Error::Unbounded)
+                return Err(Error::Unbounded);
             }
             let s = self.z[j] / dz[j];
             assert!(!s.is_nan(), "s is NaN");
@@ -110,6 +110,7 @@ impl Simplex {
                     *z -= s * dz[k]
                 }
             }
+            self.swap(j, i);
         }
         Ok(())
     }
@@ -152,12 +153,7 @@ fn pick_exit(set: &[usize], n: &[f64], d: &[f64]) -> usize {
     let mut index = 0;
     let mut max_ratio = n[0] / d[0];
 
-    for (ratio, i) in n
-        .iter()
-        .zip(d)
-        .map(|(n, d)| n / d)
-        .zip(set)
-    {
+    for (ratio, i) in n.iter().zip(d).map(|(n, d)| n / d).zip(set) {
         if ratio > max_ratio {
             max_ratio = ratio;
             index = *i;
