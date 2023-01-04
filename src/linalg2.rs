@@ -110,6 +110,14 @@ pub(crate) struct CooMatrix {
 }
 
 impl CooMatrix {
+    pub(crate) fn column(&self, j: usize) -> Vec<f64> {
+        todo!()
+    }
+
+    pub(crate) fn collect_columns(&self, cols: &[usize]) -> Self {
+        todo!()
+    }
+
     fn to_dense(&self) -> Matrix {
         Matrix::from(self)
     }
@@ -131,7 +139,7 @@ impl From<&Matrix> for CooMatrix {
                 j = 0;
                 i += 1;
             }
-        };
+        }
         Self {
             nrows: dense.nrows,
             ncols: dense.ncols,
