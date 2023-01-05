@@ -1,10 +1,11 @@
 use crate::linalg2::{lu_solve, lu_solve_t, CscMatrix, Matrix};
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Clone)]
 struct Variable {
     id: usize,
 }
@@ -49,9 +50,32 @@ struct Equality {
     b: f64,
 }
 
+#[derive(Debug)]
 enum Error {
     Unbounded,
     Infeasible,
+}
+
+struct Solution {
+    obj_val: f64,
+    x: HashMap<usize, f64>,
+}
+
+impl From<&mut Simplex> for Solution {
+    fn from(simplex: &mut Simplex) -> Self {
+        Self {
+            obj_val: simplex
+                .b
+                .iter()
+                .map(|&i| simplex.obj_coefs[i] * simplex.x[simplex.positions[i]])
+                .sum(),
+            x: simplex
+                .b
+                .iter()
+                .map(|&i| (simplex.ids[i], simplex.x[simplex.positions[i]]))
+                .collect(),
+        }
+    }
 }
 
 fn align(linexpr: &LinExpr, indexer: &HashMap<usize, usize>) -> Vec<f64> {
@@ -88,6 +112,18 @@ struct Simplex {
 
 impl Simplex {
     fn new(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
+        // STEP 0: Collect all original variables, before we add any slack
+        let mut orig_vars = HashSet::new();
+        for id in objective.linexpr.vars.iter().map(|var| var.id).chain(
+            constraints
+                .iter()
+                .flat_map(|c| c.linexpr.vars.iter().map(|var| var.id)),
+        ) {
+            if !orig_vars.contains(&id) {
+                orig_vars.insert(id);
+            }
+        }
+
         // STEP 1: Insert slack variables into each constraint, and convert the inequalities
         // to equalities.
         let equality_constraints = constraints
@@ -129,7 +165,11 @@ impl Simplex {
 
         // STEP 5: Prepare remaining initialization parameters
         let x = equality_constraints.iter().map(|c| c.b).collect();
-        let z = obj_coefs[..n - m].to_vec();
+        let z = ids
+            .iter()
+            .filter(|id| orig_vars.contains(id))
+            .map(|id| -obj_coefs[indexer[id]])
+            .collect();
 
         Self {
             obj_coefs,
@@ -165,7 +205,7 @@ impl Simplex {
         self.n[self.positions[exit]] = exit;
     }
 
-    fn run_primal_simplex(&mut self) -> Result<(), Error> {
+    fn run_primal_simplex(&mut self) -> Result<Solution, Error> {
         while let Some(j) = try_pick_enter(&self.n, &self.z) {
             let basis_matrix = self.constraints.collect_columns(&self.b);
 
@@ -199,19 +239,19 @@ impl Simplex {
             }
             self.swap(j, i);
         }
-        Ok(())
+        Ok(Solution::from(self))
     }
 
-    fn run_dual_simplex(&mut self) -> Result<(), Error> {
+    fn run_dual_simplex(&mut self) -> Result<Solution, Error> {
         todo!()
     }
 
-    fn optimize(&mut self) -> Result<(), Error> {
-        let is_primal_feasible = self.x.iter().all(|&x| x >= 0.0);
-        let is_dual_feasible = self.z.iter().all(|&x| x >= 0.0);
+    fn optimize(&mut self) -> Result<Solution, Error> {
+        let is_primal_feasible = self.x.iter().all(|k| *k >= 0.0);
+        let is_dual_feasible = self.z.iter().all(|k| *k >= 0.0);
 
         match (is_primal_feasible, is_dual_feasible) {
-            (true, true) => Ok(()),
+            (true, true) => Ok(Solution::from(self)),
             (true, false) => self.run_primal_simplex(),
             (false, true) => self.run_dual_simplex().map_err(|err| match err {
                 Error::Unbounded => Error::Infeasible,
@@ -255,6 +295,31 @@ mod tests {
 
     #[test]
     fn test_primal_simplex() {
-        todo!()
+        let x = Variable::new();
+        let y = Variable::new();
+        let objective = AffExpr {
+            linexpr: LinExpr {
+                coefs: vec![2.0, 2.0],
+                vars: vec![x.clone(), y.clone()],
+            },
+            constant: 3.0,
+        };
+        let c_1 = Inequality {
+            linexpr: LinExpr {
+                coefs: vec![1.0],
+                vars: vec![x.clone()],
+            },
+            b: 3.0,
+        };
+        let c_2 = Inequality {
+            linexpr: LinExpr {
+                coefs: vec![1.0],
+                vars: vec![y.clone()],
+            },
+            b: 3.0,
+        };
+        let constraints = vec![c_1, c_2];
+        let soln = Simplex::new(objective, constraints).optimize().unwrap();
+        assert_eq!(soln.obj_val, 15.0)
     }
 }
