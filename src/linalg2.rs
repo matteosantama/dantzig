@@ -9,14 +9,6 @@ pub(crate) fn lu_solve(a: Matrix, b: Vec<f64>) -> Vec<f64> {
     a.factorize().solve(b)
 }
 
-/// Solve the equation `a.t() * x = b` for `x` with an LU factorization.
-///
-/// This function takes ownership of the `a` matrix, and writes the result
-/// directly into it.
-pub(crate) fn lu_solve_t(a: Matrix, b: Vec<f64>) -> Vec<f64> {
-    a.t().factorize().solve(b)
-}
-
 /// Dense matrix with row-major order
 pub(crate) struct Matrix {
     nrows: usize,
@@ -45,7 +37,7 @@ impl Matrix {
         data
     }
 
-    fn t(&self) -> Self {
+    pub(crate) fn t(&self) -> Self {
         Self {
             nrows: self.ncols,
             ncols: self.nrows,

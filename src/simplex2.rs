@@ -1,4 +1,4 @@
-use crate::linalg2::{lu_solve, lu_solve_t, CscMatrix, Matrix};
+use crate::linalg2::{lu_solve, CscMatrix, Matrix};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -223,7 +223,7 @@ impl Simplex {
     fn solve_for_dz(&self, i: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
         let mut e = vec![0.0; basis_matrix.nrows()];
         e[self.positions[i]] = 1.0;
-        let v = lu_solve_t(basis_matrix.clone().to_dense(), e);
+        let v = lu_solve(basis_matrix.clone().to_dense().t(), e);
         self.constraints.collect_columns(&self.n).neg_t_dot(v)
     }
 
@@ -243,15 +243,13 @@ impl Simplex {
             let dz = self.solve_for_dz(i, &basis_matrix);
 
             let t = self.x[self.positions[i]] / dx[self.positions[i]];
+            let s = self.z[self.positions[j]] / dz[self.positions[j]];
             assert!(!t.is_nan() && !t.is_infinite());
+            assert!(!s.is_nan() && !s.is_infinite());
             if t < 0.0 {
                 return Err(Error::Unbounded);
             }
-            let s = self.z[self.positions[j]] / dz[self.positions[j]];
-            assert!(!s.is_nan() && !s.is_infinite());
-
             self.pivot(i, j, t, s, &dx, &dz);
-            self.swap(i, j);
         }
         Ok(Solution::from(self))
     }
@@ -265,34 +263,33 @@ impl Simplex {
             let dx = self.solve_for_dx(j, &basis_matrix);
 
             let s = self.z[self.positions[j]] / dz[self.positions[j]];
+            let t = self.x[self.positions[i]] / dx[self.positions[i]];
             assert!(!s.is_nan() && !s.is_infinite());
+            assert!(!t.is_nan() && !t.is_infinite());
             if s < 0.0 {
                 return Err(Error::Unbounded);
             }
-            let t = self.x[self.positions[i]] / dx[self.positions[i]];
-            assert!(!t.is_nan() && !t.is_infinite());
-
-            self.pivot(j, i, t, s, &dx, &dz);
-            self.swap(i, j);
+            self.pivot(i, j, t, s, &dx, &dz);
         }
         Ok(Solution::from(self))
     }
 
     fn pivot(&mut self, i: usize, j: usize, t: f64, s: f64, dx: &[f64], dz: &[f64]) {
-        self.x.iter_mut().enumerate().for_each(|(k, x)| {
-            if k == self.positions[j] {
+        self.x.iter_mut().zip(&self.b).for_each(|(x, k)| {
+            if *k == i {
                 *x = t;
             } else {
-                *x -= t * dx[k]
+                *x -= t * dx[self.positions[*k]];
             }
         });
-        self.z.iter_mut().enumerate().for_each(|(k, z)| {
-            if k == self.positions[i] {
+        self.z.iter_mut().zip(&self.n).for_each(|(z, k)| {
+            if *k == j {
                 *z = s;
             } else {
-                *z -= s * dz[k]
+                *z -= s * dz[self.positions[*k]];
             }
         });
+        self.swap(i, j);
     }
 
     fn optimize(&mut self) -> Result<Solution, Error> {
@@ -338,11 +335,11 @@ fn try_pick_enter(set: &[usize], coefs: &[f64]) -> Option<usize> {
 
 fn pick_exit(set: &[usize], n: &[f64], d: &[f64]) -> usize {
     debug_assert_eq!(n.len(), d.len());
-
     let mut index = 0;
     let mut max_ratio = n[0] / d[0];
 
     for (i, ratio) in n.iter().zip(d).map(|(n, d)| n / d).enumerate() {
+        assert!(!ratio.is_infinite() && !ratio.is_nan());
         if ratio > max_ratio {
             max_ratio = ratio;
             index = i;
