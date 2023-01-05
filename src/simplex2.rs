@@ -222,24 +222,16 @@ impl Simplex {
 
     fn solve_for_dz(&self, i: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
         let mut e = vec![0.0; basis_matrix.nrows()];
-        e[i] = 1.0;
-        dbg!(&self.b);
-        // dbg!(&e);
-        dbg!(basis_matrix.to_dense());
+        e[self.positions[i]] = 1.0;
         let v = lu_solve_t(basis_matrix.clone().to_dense(), e);
-        dbg!(&v);
-        // let v = v
-        //     .iter()
-        //     .map(|v_i| if v_i.is_nan() { 0.0 } else { *v_i })
-        //     .collect();
         self.constraints.collect_columns(&self.n).neg_t_dot(v)
     }
 
-    fn swap(&mut self, enter: usize, exit: usize) {
-        self.positions.swap(enter, exit);
+    fn swap(&mut self, i: usize, j: usize) {
+        self.b[self.positions[i]] = j;
+        self.n[self.positions[j]] = i;
 
-        self.b[self.positions[enter]] = enter;
-        self.n[self.positions[exit]] = exit;
+        self.positions.swap(i, j);
     }
 
     fn run_primal_simplex(&mut self) -> Result<Solution, Error> {
@@ -248,7 +240,7 @@ impl Simplex {
 
             let dx = self.solve_for_dx(j, &basis_matrix);
             let i = pick_exit(&self.b, &dx, &self.x);
-            let dz = self.solve_for_dz(self.positions[i], &basis_matrix);
+            let dz = self.solve_for_dz(i, &basis_matrix);
 
             let t = self.x[self.positions[i]] / dx[self.positions[i]];
             assert!(!t.is_nan() && !t.is_infinite());
@@ -259,7 +251,7 @@ impl Simplex {
             assert!(!s.is_nan() && !s.is_infinite());
 
             self.pivot(i, j, t, s, &dx, &dz);
-            self.swap(j, i);
+            self.swap(i, j);
         }
         Ok(Solution::from(self))
     }
@@ -268,14 +260,9 @@ impl Simplex {
         while let Some(i) = try_pick_enter(&self.b, &self.x) {
             let basis_matrix = self.constraints.collect_columns(&self.b);
 
-            let dz = self.solve_for_dz(self.positions[i], &basis_matrix);
+            let dz = self.solve_for_dz(i, &basis_matrix);
             let j = pick_exit(&self.n, &dz, &self.z);
             let dx = self.solve_for_dx(j, &basis_matrix);
-
-            // dbg!(i, j);
-            // dbg!(&dz);
-            // dbg!(&self.z[self.positions[j]]);
-            // dbg!(&dz[self.positions[j]]);
 
             let s = self.z[self.positions[j]] / dz[self.positions[j]];
             assert!(!s.is_nan() && !s.is_infinite());
@@ -285,7 +272,7 @@ impl Simplex {
             let t = self.x[self.positions[i]] / dx[self.positions[i]];
             assert!(!t.is_nan() && !t.is_infinite());
 
-            self.pivot(i, j, t, s, &dx, &dz);
+            self.pivot(j, i, t, s, &dx, &dz);
             self.swap(i, j);
         }
         Ok(Solution::from(self))
