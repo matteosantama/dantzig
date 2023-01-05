@@ -111,6 +111,8 @@ impl Matrix {
             }
 
             for j in k..n {
+                // NOTE: We can use a larger for loop if we want A(i, j) to contain L(i, j)
+                // for all i < j: `for j in 0..n`. Doing so is useful for debugging.
                 let x = self.raw_index(mu, j);
                 let y = self.raw_index(k, j);
                 self.data.swap(x, y);
@@ -286,17 +288,18 @@ impl LU {
     fn solve(&self, mut b: Vec<f64>) -> Vec<f64> {
         assert_eq!(self.matrix.ncols, b.len());
         let n = b.len();
+
         for k in 0..n - 1 {
             b.swap(k, self.p[k]);
             for i in k + 1..n {
                 b[i] -= b[k] * self.matrix.at(i, k)
             }
         }
-        for i in (0..self.matrix.nrows - 1).rev() {
+        for i in (0..self.matrix.nrows).rev() {
             for j in i + 1..self.matrix.ncols {
                 b[i] -= self.matrix.at(i, j) * b[j];
             }
-            b[i] /= self.matrix.at(i, i)
+            b[i] /= self.matrix.at(i, i);
         }
         b
     }
@@ -376,6 +379,7 @@ mod tests {
             ncols: 3,
             data: vec![2.0, 0.0, 0.0, 4.0, 1.0, 0.0, 3.0, 0.0, 1.0],
         };
+
         let b = vec![1.0, 2.0, 2.0];
         let result = lu_solve(a, b);
         assert_eq!(result, &[0.5, 0.0, 0.5]);
