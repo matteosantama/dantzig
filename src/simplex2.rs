@@ -236,31 +236,25 @@ impl Simplex {
     }
 
     fn run_primal_simplex(&mut self) -> Result<Solution, Error> {
-        dbg!(&self.b);
-        dbg!(&self.n);
-        dbg!(&self.x);
-        dbg!(&self.z);
         while let Some(j) = try_pick_enter(&self.n, &self.z) {
             let basis_matrix = self.constraints.collect_columns(&self.b);
 
             let dx = self.solve_for_dx(j, &basis_matrix);
-            let i = pick_exit(&dx, &self.x);
-            let dz = self.solve_for_dz(i, &basis_matrix);
+            let i = pick_exit(&self.b, &dx, &self.x);
+            let dz = self.solve_for_dz(self.positions[i], &basis_matrix);
 
-            dbg!(i, j);
-
-            let t = self.x[i] / dx[i];
+            let t = self.x[self.positions[i]] / dx[self.positions[i]];
             assert!(!t.is_nan(), "t is NaN");
             assert!(!t.is_infinite(), "t is infinite");
             if t < 0.0 {
                 return Err(Error::Unbounded);
             }
-            let s = self.z[j] / dz[j];
+            let s = self.z[self.positions[j]] / dz[self.positions[j]];
             assert!(!s.is_nan(), "s is NaN");
             assert!(!s.is_infinite(), "s is infinite");
 
             for (k, x) in self.x.iter_mut().enumerate() {
-                if k == j {
+                if k == self.positions[j] {
                     *x = t;
                 } else {
                     *x -= t * dx[k]
@@ -274,11 +268,6 @@ impl Simplex {
                 }
             }
             self.swap(j, i);
-
-            dbg!(&self.b);
-            dbg!(&self.n);
-            dbg!(&self.x);
-            dbg!(&self.z);
         }
         Ok(Solution::from(self))
     }
@@ -321,14 +310,14 @@ impl Simplex {
 fn try_pick_enter(set: &[usize], coefs: &[f64]) -> Option<usize> {
     debug_assert!(!set.is_empty());
     debug_assert_eq!(set.len(), coefs.len());
-    return set
+    coefs
         .iter()
-        .zip(coefs)
+        .enumerate()
         .find(|(_, e)| **e < 0.0)
-        .map(|(&j, _)| j);
+        .map(|(j, _)| set[j])
 }
 
-fn pick_exit(n: &[f64], d: &[f64]) -> usize {
+fn pick_exit(set: &[usize], n: &[f64], d: &[f64]) -> usize {
     debug_assert_eq!(n.len(), d.len());
 
     let mut index = 0;
@@ -340,7 +329,7 @@ fn pick_exit(n: &[f64], d: &[f64]) -> usize {
             index = i;
         }
     }
-    index
+    set[index]
 }
 
 #[cfg(test)]
