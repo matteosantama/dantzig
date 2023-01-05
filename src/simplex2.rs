@@ -134,7 +134,7 @@ struct Simplex {
 }
 
 impl Simplex {
-    fn new(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
+    fn prepare(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
         // STEP 0: Collect and identify all original variables, before we add any slack
         let orig_vars = objective
             .linexpr
@@ -356,7 +356,7 @@ mod tests {
     use crate::simplex2::*;
 
     #[test]
-    fn test_primal_simplex() {
+    fn test_primal_simplex_1() {
         let x = Variable::new();
         let y = Variable::new();
 
@@ -366,10 +366,29 @@ mod tests {
         let c_3 = Inequality::new(&[(1.0, &y)], 5.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let soln = Simplex::new(objective, constraints).optimize().unwrap();
+        let soln = Simplex::prepare(objective, constraints).optimize().unwrap();
         assert_eq!(soln.objective_value, 31.0);
         assert_eq!(soln.__getitem__(x.id), 4.0);
         assert_eq!(soln.__getitem__(y.id), 5.0);
+    }
+
+    #[test]
+    fn test_primal_simplex_2() {
+        let x_1 = Variable::new();
+        let x_2 = Variable::new();
+        let x_3 = Variable::new();
+
+        let objective = AffExpr::new(&[(5.0, &x_1), (4.0, &x_2), (3.0, &x_3)], 0.0);
+        let c_1 = Inequality::new(&[(2.0, &x_1), (3.0, &x_2), (1.0, &x_3)], 5.0);
+        let c_2 = Inequality::new(&[(4.0, &x_1), (1.0, &x_2), (2.0, &x_3)], 11.0);
+        let c_3 = Inequality::new(&[(3.0, &x_1), (4.0, &x_2), (2.0, &x_3)], 8.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        let soln = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(soln.objective_value, 13.0);
+        assert_eq!(soln.__getitem__(x_1.id), 2.0);
+        assert_eq!(soln.__getitem__(x_2.id), 0.0);
+        assert_eq!(soln.__getitem__(x_3.id), 1.0);
     }
 
     #[test]
@@ -383,7 +402,7 @@ mod tests {
         let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let soln = Simplex::new(objective, constraints).optimize().unwrap();
+        let soln = Simplex::prepare(objective, constraints).optimize().unwrap();
         assert_eq!(soln.objective_value, -7.0);
         assert_eq!(soln.__getitem__(x.id), 7.0);
         assert_eq!(soln.__getitem__(y.id), 0.0);
