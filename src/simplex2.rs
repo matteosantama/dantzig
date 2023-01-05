@@ -335,17 +335,23 @@ fn try_pick_enter(set: &[usize], coefs: &[f64]) -> Option<usize> {
 
 fn pick_exit(set: &[usize], n: &[f64], d: &[f64]) -> usize {
     debug_assert_eq!(n.len(), d.len());
-    let mut index = 0;
+
+    let mut max_ratio_i = 0;
     let mut max_ratio = n[0] / d[0];
 
-    for (i, ratio) in n.iter().zip(d).map(|(n, d)| n / d).enumerate() {
+    n.iter().zip(d).enumerate().for_each(|(i, (n_i, d_i))| {
+        let ratio = if *n_i == 0.0 && *d_i == 0.0 {
+            0.0
+        } else {
+            *n_i / *d_i
+        };
         assert!(!ratio.is_infinite() && !ratio.is_nan());
         if ratio > max_ratio {
             max_ratio = ratio;
-            index = i;
+            max_ratio_i = i;
         }
-    }
-    set[index]
+    });
+    set[max_ratio_i]
 }
 
 #[cfg(test)]
@@ -386,6 +392,44 @@ mod tests {
         assert_eq!(soln.__getitem__(x_1.id), 2.0);
         assert_eq!(soln.__getitem__(x_2.id), 0.0);
         assert_eq!(soln.__getitem__(x_3.id), 1.0);
+    }
+
+    #[test]
+    fn test_primal_simplex_3() {
+        // LP relaxation of the problem on page C-10
+        // http://web.tecnico.ulisboa.pt/mcasquilho/compute/_linpro/TaylorB_module_c.pdf
+        let x_1 = Variable::new();
+        let x_2 = Variable::new();
+        let x_3 = Variable::new();
+        let x_4 = Variable::new();
+
+        let objective = AffExpr::new(
+            &[(300.0, &x_1), (90.0, &x_2), (400.0, &x_3), (150.0, &x_4)],
+            0.0,
+        );
+        let c_1 = Inequality::new(
+            &[
+                (35_000.0, &x_1),
+                (10_000.0, &x_2),
+                (25_000.0, &x_3),
+                (90_000.0, &x_4),
+            ],
+            120_000.0,
+        );
+        let c_2 = Inequality::new(&[(4.0, &x_1), (2.0, &x_2), (7.0, &x_3), (3.0, &x_4)], 12.0);
+        let c_3 = Inequality::new(&[(1.0, &x_1), (1.0, &x_2)], 1.0);
+        let c_4 = Inequality::new(&[(1.0, &x_1)], 1.0);
+        let c_5 = Inequality::new(&[(1.0, &x_2)], 1.0);
+        let c_6 = Inequality::new(&[(1.0, &x_3)], 1.0);
+        let c_7 = Inequality::new(&[(1.0, &x_4)], 1.0);
+        let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7];
+
+        let soln = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(soln.objective_value, 750.0);
+        assert_eq!(soln.__getitem__(x_1.id), 1.0);
+        assert_eq!(soln.__getitem__(x_2.id), 0.0);
+        assert_eq!(soln.__getitem__(x_3.id), 1.0);
+        assert_eq!(soln.__getitem__(x_4.id), 1.0 / 3.0);
     }
 
     #[test]
