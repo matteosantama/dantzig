@@ -217,14 +217,21 @@ impl Simplex {
 
     fn solve_for_dx(&self, j: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
         let b = self.constraints.column(j);
-        lu_solve(basis_matrix, b)
+        lu_solve(basis_matrix.clone().to_dense(), b)
     }
 
     fn solve_for_dz(&self, i: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
-        let e = (0..basis_matrix.nrows())
-            .map(|k| (k == i) as u8 as f64)
-            .collect::<Vec<_>>();
-        let v = lu_solve_t(basis_matrix, e);
+        let mut e = vec![0.0; basis_matrix.nrows()];
+        e[i] = 1.0;
+        dbg!(&self.b);
+        // dbg!(&e);
+        dbg!(basis_matrix.to_dense());
+        let v = lu_solve_t(basis_matrix.clone().to_dense(), e);
+        dbg!(&v);
+        // let v = v
+        //     .iter()
+        //     .map(|v_i| if v_i.is_nan() { 0.0 } else { *v_i })
+        //     .collect();
         self.constraints.collect_columns(&self.n).neg_t_dot(v)
     }
 
@@ -244,36 +251,61 @@ impl Simplex {
             let dz = self.solve_for_dz(self.positions[i], &basis_matrix);
 
             let t = self.x[self.positions[i]] / dx[self.positions[i]];
-            assert!(!t.is_nan(), "t is NaN");
-            assert!(!t.is_infinite(), "t is infinite");
+            assert!(!t.is_nan() && !t.is_infinite());
             if t < 0.0 {
                 return Err(Error::Unbounded);
             }
             let s = self.z[self.positions[j]] / dz[self.positions[j]];
-            assert!(!s.is_nan(), "s is NaN");
-            assert!(!s.is_infinite(), "s is infinite");
+            assert!(!s.is_nan() && !s.is_infinite());
 
-            for (k, x) in self.x.iter_mut().enumerate() {
-                if k == self.positions[j] {
-                    *x = t;
-                } else {
-                    *x -= t * dx[k]
-                }
-            }
-            for (k, z) in self.z.iter_mut().enumerate() {
-                if k == self.positions[i] {
-                    *z = s;
-                } else {
-                    *z -= s * dz[k]
-                }
-            }
+            self.pivot(i, j, t, s, &dx, &dz);
             self.swap(j, i);
         }
         Ok(Solution::from(self))
     }
 
     fn run_dual_simplex(&mut self) -> Result<Solution, Error> {
-        todo!()
+        while let Some(i) = try_pick_enter(&self.b, &self.x) {
+            let basis_matrix = self.constraints.collect_columns(&self.b);
+
+            let dz = self.solve_for_dz(self.positions[i], &basis_matrix);
+            let j = pick_exit(&self.n, &dz, &self.z);
+            let dx = self.solve_for_dx(j, &basis_matrix);
+
+            // dbg!(i, j);
+            // dbg!(&dz);
+            // dbg!(&self.z[self.positions[j]]);
+            // dbg!(&dz[self.positions[j]]);
+
+            let s = self.z[self.positions[j]] / dz[self.positions[j]];
+            assert!(!s.is_nan() && !s.is_infinite());
+            if s < 0.0 {
+                return Err(Error::Unbounded);
+            }
+            let t = self.x[self.positions[i]] / dx[self.positions[i]];
+            assert!(!t.is_nan() && !t.is_infinite());
+
+            self.pivot(i, j, t, s, &dx, &dz);
+            self.swap(i, j);
+        }
+        Ok(Solution::from(self))
+    }
+
+    fn pivot(&mut self, i: usize, j: usize, t: f64, s: f64, dx: &[f64], dz: &[f64]) {
+        self.x.iter_mut().enumerate().for_each(|(k, x)| {
+            if k == self.positions[j] {
+                *x = t;
+            } else {
+                *x -= t * dx[k]
+            }
+        });
+        self.z.iter_mut().enumerate().for_each(|(k, z)| {
+            if k == self.positions[i] {
+                *z = s;
+            } else {
+                *z -= s * dz[k]
+            }
+        });
     }
 
     fn optimize(&mut self) -> Result<Solution, Error> {
@@ -351,5 +383,22 @@ mod tests {
         assert_eq!(soln.objective_value, 31.0);
         assert_eq!(soln.__getitem__(x.id), 4.0);
         assert_eq!(soln.__getitem__(y.id), 5.0);
+    }
+
+    #[test]
+    fn test_dual_simplex() {
+        let x = Variable::new();
+        let y = Variable::new();
+
+        let objective = AffExpr::new(&[(-1.0, &x), (-1.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(-2.0, &x), (-1.0, &y)], 4.0);
+        let c_2 = Inequality::new(&[(-2.0, &x), (4.0, &y)], -8.0);
+        let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        let soln = Simplex::new(objective, constraints).optimize().unwrap();
+        assert_eq!(soln.objective_value, -7.0);
+        assert_eq!(soln.__getitem__(x.id), 7.0);
+        assert_eq!(soln.__getitem__(y.id), 0.0);
     }
 }

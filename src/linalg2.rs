@@ -1,11 +1,20 @@
+use std::fmt;
+use std::fmt::Formatter;
+
 /// Solve the equation `a * x = b` for `x` with an LU factorization.
-pub(crate) fn lu_solve(a: &CscMatrix, b: Vec<f64>) -> Vec<f64> {
-    a.to_dense().factorize().solve(b)
+///
+/// This function takes ownership of the `a` matrix, and writes the result
+/// directly into it.
+pub(crate) fn lu_solve(a: Matrix, b: Vec<f64>) -> Vec<f64> {
+    a.factorize().solve(b)
 }
 
 /// Solve the equation `a.t() * x = b` for `x` with an LU factorization.
-pub(crate) fn lu_solve_t(a: &CscMatrix, b: Vec<f64>) -> Vec<f64> {
-    a.to_dense().t().factorize().solve(b)
+///
+/// This function takes ownership of the `a` matrix, and writes the result
+/// directly into it.
+pub(crate) fn lu_solve_t(a: Matrix, b: Vec<f64>) -> Vec<f64> {
+    a.t().factorize().solve(b)
 }
 
 /// Dense matrix with row-major order
@@ -35,20 +44,17 @@ impl Matrix {
         }
         data
     }
-}
 
-impl From<&CscMatrix> for Matrix {
-    fn from(sparse: &CscMatrix) -> Self {
-        let mut dense = Matrix::zero(sparse.nrows, sparse.ncols);
-
-        for (i, j, val) in sparse.iter() {
-            *dense.at_mut(i, j) = *val
+    fn t(&self) -> Self {
+        Self {
+            nrows: self.ncols,
+            ncols: self.nrows,
+            data: (0..self.ncols)
+                .flat_map(|j| self.data.iter().skip(j).step_by(self.ncols).cloned())
+                .collect(),
         }
-        dense
     }
-}
 
-impl Matrix {
     fn column(&self, j: usize) -> impl Iterator<Item = &f64> {
         self.data.iter().skip(j).step_by(self.ncols)
     }
@@ -124,23 +130,39 @@ impl Matrix {
         }
         LU { p, matrix: self }
     }
+}
 
-    fn t(&self) -> Self {
-        let mut data = Vec::with_capacity(self.nrows * self.ncols);
-        for j in 0..self.ncols {
-            for i in 0..self.nrows {
-                data.push(*self.at(i, j));
+impl From<&CscMatrix> for Matrix {
+    fn from(sparse: &CscMatrix) -> Self {
+        let mut dense = Matrix::zero(sparse.nrows, sparse.ncols);
+
+        for (i, j, val) in sparse.iter() {
+            *dense.at_mut(i, j) = *val
+        }
+        dense
+    }
+}
+
+impl fmt::Debug for Matrix {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "[\n").unwrap();
+        for i in 0..self.nrows {
+            write!(f, "    ").unwrap();
+            for j in 0..self.ncols {
+                match j == self.ncols - 1 {
+                    true => write!(f, "{}", self.at(i, j)),
+                    false => write!(f, "{}, ", self.at(i, j)),
+                }
+                .unwrap();
             }
+            write!(f, "\n").unwrap();
         }
-        Self {
-            nrows: self.ncols,
-            ncols: self.nrows,
-            data,
-        }
+        write!(f, "]")
     }
 }
 
 /// Sparse matrix in CSC (Compressed Sparse Column) format
+#[derive(Clone)]
 pub(crate) struct CscMatrix {
     nrows: usize,
     ncols: usize,
@@ -150,6 +172,15 @@ pub(crate) struct CscMatrix {
 }
 
 impl CscMatrix {
+    pub(crate) fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn ncols(&self) -> usize {
+        self.ncols
+    }
+
     pub(crate) fn column(&self, j: usize) -> Vec<f64> {
         let mut col = vec![0.0; self.nrows];
         for (i, val) in self.column_iter(j) {
@@ -159,17 +190,9 @@ impl CscMatrix {
     }
 
     pub(crate) fn collect_columns(&self, cols: &[usize]) -> Self {
+        // TODO: presumably this can be optimized
         let cols = cols.iter().map(|j| self.column(*j)).collect::<Vec<_>>();
         Self::from_col_major(self.nrows, cols.len(), &cols)
-    }
-
-    pub(crate) fn nrows(&self) -> usize {
-        self.nrows
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn ncols(&self) -> usize {
-        self.ncols
     }
 
     /// An efficient utility function for computing -self^T *  v.
@@ -214,7 +237,7 @@ impl CscMatrix {
         sparse
     }
 
-    fn to_dense(&self) -> Matrix {
+    pub(crate) fn to_dense(&self) -> Matrix {
         Matrix::from(self)
     }
 
@@ -343,10 +366,9 @@ mod tests {
             nrows: 3,
             ncols: 3,
             data: vec![6.0, 18.0, 3.0, 2.0, 12.0, 1.0, 4.0, 15.0, 3.0],
-        }
-        .to_sparse();
+        };
         let b = vec![3.0, 19.0, 0.0];
-        let result = lu_solve(&a, b);
+        let result = lu_solve(a, b);
         assert_eq!(result, &[-3.0, 3.0, -11.0])
     }
 
