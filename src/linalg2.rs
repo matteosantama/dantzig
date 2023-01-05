@@ -57,10 +57,12 @@ impl Matrix {
         self.data.iter().skip(self.ncols * i).take(self.ncols)
     }
 
+    #[allow(dead_code)]
     fn column_mut(&mut self, j: usize) -> impl Iterator<Item = &mut f64> {
         self.data.iter_mut().skip(j).step_by(self.ncols)
     }
 
+    #[allow(dead_code)]
     fn row_mut(&mut self, i: usize) -> impl Iterator<Item = &mut f64> {
         self.data.iter_mut().skip(self.ncols * i).take(self.ncols)
     }
@@ -165,6 +167,7 @@ impl CscMatrix {
         self.nrows
     }
 
+    #[allow(dead_code)]
     pub(crate) fn ncols(&self) -> usize {
         self.ncols
     }

@@ -57,33 +57,31 @@ enum Error {
 }
 
 struct Solution {
-    obj_val: f64,
-    x: HashMap<usize, f64>,
+    objective_value: f64,
+    solution: HashMap<usize, f64>,
+}
+
+impl Solution {
+    fn __getitem__(&self, id: usize) -> f64 {
+        self.solution.get(&id).cloned().unwrap_or(0.0)
+    }
 }
 
 impl From<&mut Simplex> for Solution {
     fn from(simplex: &mut Simplex) -> Self {
         Self {
-            obj_val: simplex
-                .b
-                .iter()
-                .map(|&i| simplex.obj_coefs[i] * simplex.x[simplex.positions[i]])
-                .sum(),
-            x: simplex
-                .b
-                .iter()
-                .map(|&i| (simplex.ids[i], simplex.x[simplex.positions[i]]))
-                .collect(),
+            objective_value: simplex.objective_value(),
+            solution: simplex.solution(),
         }
     }
 }
 
 fn align(linexpr: &LinExpr, indexer: &HashMap<usize, usize>) -> Vec<f64> {
-    let mut obj_coefs = vec![0.0; indexer.len()];
+    let mut aligned = vec![0.0; indexer.len()];
     for (i, var) in linexpr.vars.iter().enumerate() {
-        obj_coefs[indexer[&var.id]] = linexpr.coefs[i];
+        aligned[indexer[&var.id]] = linexpr.coefs[i];
     }
-    obj_coefs
+    aligned
 }
 
 /// https://dl.icdst.org/pdfs/files3/faa54c1f53965a11b03f9a13b023f9b2.pdf
@@ -104,6 +102,7 @@ struct Simplex {
     ids: Vec<usize>,
     // Map a variable ID to its index in the problem. In particular, the following must
     // always be true: `ids[indexer[i]] == i`.
+    #[allow(dead_code)]
     indexer: HashMap<usize, usize>,
 
     x: Vec<f64>,
@@ -112,17 +111,18 @@ struct Simplex {
 
 impl Simplex {
     fn new(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
-        // STEP 0: Collect all original variables, before we add any slack
-        let mut orig_vars = HashSet::new();
-        for id in objective.linexpr.vars.iter().map(|var| var.id).chain(
-            constraints
-                .iter()
-                .flat_map(|c| c.linexpr.vars.iter().map(|var| var.id)),
-        ) {
-            if !orig_vars.contains(&id) {
-                orig_vars.insert(id);
-            }
-        }
+        // STEP 0: Collect and identify all original variables, before we add any slack
+        let orig_vars = objective
+            .linexpr
+            .vars
+            .iter()
+            .map(|var| var.id)
+            .chain(
+                constraints
+                    .iter()
+                    .flat_map(|c| c.linexpr.vars.iter().map(|var| var.id)),
+            )
+            .collect::<HashSet<usize>>();
 
         // STEP 1: Insert slack variables into each constraint, and convert the inequalities
         // to equalities.
@@ -135,16 +135,22 @@ impl Simplex {
         // to each.
         let mut ids = Vec::new();
         let mut indexer = HashMap::new();
-        for id in objective.linexpr.vars.iter().map(|var| var.id).chain(
-            equality_constraints
-                .iter()
-                .flat_map(|c| c.linexpr.vars.iter().map(|var| var.id)),
-        ) {
-            if let Entry::Vacant(e) = indexer.entry(id) {
-                e.insert(ids.len());
-                ids.push(id);
-            }
-        }
+        objective
+            .linexpr
+            .vars
+            .iter()
+            .map(|var| var.id)
+            .chain(
+                equality_constraints
+                    .iter()
+                    .flat_map(|c| c.linexpr.vars.iter().map(|var| var.id)),
+            )
+            .for_each(|id| {
+                if let Entry::Vacant(e) = indexer.entry(id) {
+                    e.insert(ids.len());
+                    ids.push(id);
+                }
+            });
 
         // STEP 3: Align the objective to these new indices
         let obj_const = objective.constant;
@@ -210,7 +216,7 @@ impl Simplex {
             let basis_matrix = self.constraints.collect_columns(&self.b);
 
             let dx = self.solve_for_dx(j, &basis_matrix);
-            let i = pick_exit(&self.b, &dx, &self.x);
+            let i = pick_exit(&dx, &self.x);
             let dz = self.solve_for_dz(i, &basis_matrix);
 
             let t = self.x[i] / dx[i];
@@ -231,7 +237,7 @@ impl Simplex {
                 }
             }
             for (k, z) in self.z.iter_mut().enumerate() {
-                if k == i {
+                if k == self.positions[i] {
                     *z = s;
                 } else {
                     *z -= s * dz[k]
@@ -260,6 +266,21 @@ impl Simplex {
             (false, false) => todo!(),
         }
     }
+
+    fn objective_value(&self) -> f64 {
+        self.b
+            .iter()
+            .map(|&i| self.obj_coefs[i] * self.x[self.positions[i]])
+            .sum::<f64>()
+            + self.obj_const
+    }
+
+    fn solution(&self) -> HashMap<usize, f64> {
+        self.b
+            .iter()
+            .map(|&i| (self.ids[i], self.x[self.positions[i]]))
+            .collect()
+    }
 }
 
 fn try_pick_enter(set: &[usize], coefs: &[f64]) -> Option<usize> {
@@ -272,21 +293,19 @@ fn try_pick_enter(set: &[usize], coefs: &[f64]) -> Option<usize> {
         .map(|(&j, _)| j);
 }
 
-fn pick_exit(set: &[usize], n: &[f64], d: &[f64]) -> usize {
-    debug_assert!(!set.is_empty());
-    debug_assert_eq!(set.len(), n.len());
-    debug_assert_eq!(set.len(), d.len());
+fn pick_exit(n: &[f64], d: &[f64]) -> usize {
+    debug_assert_eq!(n.len(), d.len());
 
     let mut index = 0;
     let mut max_ratio = n[0] / d[0];
 
-    for (ratio, i) in n.iter().zip(d).map(|(n, d)| n / d).zip(set) {
+    for (i, ratio) in n.iter().zip(d).map(|(n, d)| n / d).enumerate() {
         if ratio > max_ratio {
             max_ratio = ratio;
-            index = *i;
+            index = i;
         }
     }
-    set[index]
+    index
 }
 
 #[cfg(test)]
@@ -320,6 +339,8 @@ mod tests {
         };
         let constraints = vec![c_1, c_2];
         let soln = Simplex::new(objective, constraints).optimize().unwrap();
-        assert_eq!(soln.obj_val, 15.0)
+        assert_eq!(soln.objective_value, 15.0);
+        assert_eq!(soln.__getitem__(x.id), 3.0);
+        assert_eq!(soln.__getitem__(y.id), 3.0);
     }
 }
