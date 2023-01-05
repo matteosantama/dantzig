@@ -23,9 +23,26 @@ struct LinExpr {
     vars: Vec<Variable>,
 }
 
+impl From<&[(f64, &Variable)]> for LinExpr {
+    fn from(value: &[(f64, &Variable)]) -> Self {
+        let coefs = value.iter().map(|v| v.0).collect();
+        let vars = value.iter().map(|v| v.1).cloned().collect();
+        Self { coefs, vars }
+    }
+}
+
 struct AffExpr {
     linexpr: LinExpr,
     constant: f64,
+}
+
+impl AffExpr {
+    fn new(linexpr: &[(f64, &Variable)], constant: f64) -> Self {
+        Self {
+            linexpr: LinExpr::from(linexpr),
+            constant,
+        }
+    }
 }
 
 struct Inequality {
@@ -41,6 +58,13 @@ impl Inequality {
         Equality {
             linexpr: self.linexpr,
             b: self.b,
+        }
+    }
+
+    fn new(linexpr: &[(f64, &Variable)], b: f64) -> Self {
+        Self {
+            linexpr: LinExpr::from(linexpr),
+            b,
         }
     }
 }
@@ -212,12 +236,18 @@ impl Simplex {
     }
 
     fn run_primal_simplex(&mut self) -> Result<Solution, Error> {
+        dbg!(&self.b);
+        dbg!(&self.n);
+        dbg!(&self.x);
+        dbg!(&self.z);
         while let Some(j) = try_pick_enter(&self.n, &self.z) {
             let basis_matrix = self.constraints.collect_columns(&self.b);
 
             let dx = self.solve_for_dx(j, &basis_matrix);
             let i = pick_exit(&dx, &self.x);
             let dz = self.solve_for_dz(i, &basis_matrix);
+
+            dbg!(i, j);
 
             let t = self.x[i] / dx[i];
             assert!(!t.is_nan(), "t is NaN");
@@ -244,6 +274,11 @@ impl Simplex {
                 }
             }
             self.swap(j, i);
+
+            dbg!(&self.b);
+            dbg!(&self.n);
+            dbg!(&self.x);
+            dbg!(&self.z);
         }
         Ok(Solution::from(self))
     }
@@ -316,31 +351,16 @@ mod tests {
     fn test_primal_simplex() {
         let x = Variable::new();
         let y = Variable::new();
-        let objective = AffExpr {
-            linexpr: LinExpr {
-                coefs: vec![2.0, 2.0],
-                vars: vec![x.clone(), y.clone()],
-            },
-            constant: 3.0,
-        };
-        let c_1 = Inequality {
-            linexpr: LinExpr {
-                coefs: vec![1.0],
-                vars: vec![x.clone()],
-            },
-            b: 3.0,
-        };
-        let c_2 = Inequality {
-            linexpr: LinExpr {
-                coefs: vec![1.0],
-                vars: vec![y.clone()],
-            },
-            b: 3.0,
-        };
-        let constraints = vec![c_1, c_2];
+
+        let objective = AffExpr::new(&[(4.0, &x), (3.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(1.0, &x), (-1.0, &y)], 1.0);
+        let c_2 = Inequality::new(&[(2.0, &x), (-1.0, &y)], 3.0);
+        let c_3 = Inequality::new(&[(1.0, &y)], 5.0);
+        let constraints = vec![c_1, c_2, c_3];
+
         let soln = Simplex::new(objective, constraints).optimize().unwrap();
-        assert_eq!(soln.objective_value, 15.0);
-        assert_eq!(soln.__getitem__(x.id), 3.0);
-        assert_eq!(soln.__getitem__(y.id), 3.0);
+        assert_eq!(soln.objective_value, 31.0);
+        assert_eq!(soln.__getitem__(x.id), 4.0);
+        assert_eq!(soln.__getitem__(y.id), 5.0);
     }
 }
