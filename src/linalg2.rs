@@ -369,7 +369,16 @@ mod tests {
         };
         let b = vec![3.0, 19.0, 0.0];
         let result = lu_solve(a, b);
-        assert_eq!(result, &[-3.0, 3.0, -11.0])
+        assert_eq!(result, &[-3.0, 3.0, -11.0]);
+
+        let a = Matrix {
+            nrows: 3,
+            ncols: 3,
+            data: vec![2.0, 0.0, 0.0, 4.0, 1.0, 0.0, 3.0, 0.0, 1.0],
+        };
+        let b = vec![1.0, 2.0, 2.0];
+        let result = lu_solve(a, b);
+        assert_eq!(result, &[0.5, 0.0, 0.5]);
     }
 
     #[test]
