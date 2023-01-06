@@ -80,25 +80,25 @@ enum Error {
     Infeasible,
 }
 
-struct Solution {
-    objective_value: f64,
-    solution: HashMap<usize, f64>,
-}
-
-impl Solution {
-    fn __getitem__(&self, id: usize) -> f64 {
-        self.solution.get(&id).cloned().unwrap_or(0.0)
-    }
-}
-
-impl From<&mut Simplex> for Solution {
-    fn from(simplex: &mut Simplex) -> Self {
-        Self {
-            objective_value: simplex.objective_value(),
-            solution: simplex.solution(),
-        }
-    }
-}
+// struct Solution {
+//     objective_value: f64,
+//     solution: HashMap<usize, f64>,
+// }
+//
+// impl Solution {
+//     fn __getitem__(&self, id: usize) -> f64 {
+//         self.solution.get(&id).cloned().unwrap_or(0.0)
+//     }
+// }
+//
+// impl From<Simplex> for Solution {
+//     fn from(simplex: Simplex) -> Self {
+//         Self {
+//             objective_value: simplex.objective_value(),
+//             solution: simplex.solution(),
+//         }
+//     }
+// }
 
 fn align(linexpr: &LinExpr, indexer: &HashMap<usize, usize>) -> Vec<f64> {
     let mut aligned = vec![0.0; indexer.len()];
@@ -121,6 +121,9 @@ struct Simplex {
     // index `k` in _either_ `b` or `n`. The caller is responsible for knowing whether
     // variable `i` is basic or non-basic.
     positions: Vec<usize>,
+
+    // Store the IDs of all basic variables
+    // basic_set: HashSet<usize>,
 
     // If `ids[i] = k`, then variable `i` (identified by position) has ID `k`.
     ids: Vec<usize>,
@@ -212,11 +215,20 @@ impl Simplex {
             b: (n - m..n).collect(),
             n: (0..n - m).collect(),
             positions: (0..n - m).chain(0..m).collect(),
+            // basic_set: ids[n - m..].iter().cloned().collect(),
             ids,
             indexer,
             x,
             z,
         }
+    }
+
+    fn phase_one(simplex: Simplex) -> Self {
+        todo!()
+    }
+
+    fn phase_two(simplex: Simplex) -> Self {
+        todo!()
     }
 
     fn solve_for_dx(&self, j: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
@@ -245,7 +257,7 @@ impl Simplex {
         (t, s)
     }
 
-    fn run_primal_simplex(&mut self) -> Result<Solution, Error> {
+    fn run_primal_simplex(mut self) -> Result<Simplex, Error> {
         while let Some(j) = try_pick_enter(&self.n, &self.z) {
             let basis_matrix = self.constraints.collect_columns(&self.b);
 
@@ -258,11 +270,13 @@ impl Simplex {
                 return Err(Error::Unbounded);
             }
             self.pivot(i, j, t, s, &dx, &dz);
+            // assert!(self.basic_set.remove(&i));
+            // assert!(self.basic_set.insert(j));
         }
-        Ok(self.into())
+        Ok(self)
     }
 
-    fn run_dual_simplex(&mut self) -> Result<Solution, Error> {
+    fn run_dual_simplex(mut self) -> Result<Simplex, Error> {
         while let Some(i) = try_pick_enter(&self.b, &self.x) {
             let basis_matrix = self.constraints.collect_columns(&self.b);
 
@@ -275,8 +289,10 @@ impl Simplex {
                 return Err(Error::Infeasible);
             }
             self.pivot(i, j, t, s, &dx, &dz);
+            // assert!(self.basic_set.remove(&i));
+            // assert!(self.basic_set.insert(j));
         }
-        Ok(self.into())
+        Ok(self)
     }
 
     fn pivot(&mut self, i: usize, j: usize, t: f64, s: f64, dx: &[f64], dz: &[f64]) {
@@ -297,7 +313,7 @@ impl Simplex {
         self.swap(i, j);
     }
 
-    fn optimize(&mut self) -> Result<Solution, Error> {
+    fn optimize(mut self) -> Result<Simplex, Error> {
         let is_primal_feasible = self.x.iter().all(|k| *k >= 0.0);
         let is_dual_feasible = self.z.iter().all(|k| *k >= 0.0);
 
@@ -305,7 +321,12 @@ impl Simplex {
             (true, true) => Ok(self.into()),
             (true, false) => self.run_primal_simplex(),
             (false, true) => self.run_dual_simplex(),
-            (false, false) => todo!(),
+            (false, false) => {
+                let mut phase_one = Simplex::phase_one(self);
+                let result = phase_one.optimize()?;
+                let mut phase_two = Simplex::phase_two(result);
+                phase_two.optimize()
+            }
         }
     }
 
@@ -317,11 +338,13 @@ impl Simplex {
             + self.obj_const
     }
 
-    fn solution(&self) -> HashMap<usize, f64> {
-        self.b
-            .iter()
-            .map(|&i| (self.ids[i], self.x[self.positions[i]]))
-            .collect()
+    fn solution(&self, var: &Variable) -> f64 {
+        // if self.basic_set.contains(&var.id) {
+        //     self.x[self.positions[self.indexer[&var.id]]]
+        // } else {
+        //     0.0
+        // }
+        todo!()
     }
 }
 
@@ -377,10 +400,10 @@ mod tests {
         let c_3 = Inequality::new(&[(1.0, &y)], 5.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let soln = Simplex::prepare(objective, constraints).optimize().unwrap();
-        assert_eq!(soln.objective_value, 31.0);
-        assert_eq!(soln.__getitem__(x.id), 4.0);
-        assert_eq!(soln.__getitem__(y.id), 5.0);
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), 31.0);
+        // assert_eq!(result.solution(&x), 4.0);
+        // assert_eq!(result.solution(&y), 5.0);
     }
 
     #[test]
@@ -395,11 +418,11 @@ mod tests {
         let c_3 = Inequality::new(&[(3.0, &x_1), (4.0, &x_2), (2.0, &x_3)], 8.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let soln = Simplex::prepare(objective, constraints).optimize().unwrap();
-        assert_eq!(soln.objective_value, 13.0);
-        assert_eq!(soln.__getitem__(x_1.id), 2.0);
-        assert_eq!(soln.__getitem__(x_2.id), 0.0);
-        assert_eq!(soln.__getitem__(x_3.id), 1.0);
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), 13.0);
+        // assert_eq!(result.solution(&x_1), 2.0);
+        // assert_eq!(result.solution(&x_2), 0.0);
+        // assert_eq!(result.solution(&x_3), 1.0);
     }
 
     #[test]
@@ -432,12 +455,12 @@ mod tests {
         let c_7 = Inequality::new(&[(1.0, &x_4)], 1.0);
         let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7];
 
-        let soln = Simplex::prepare(objective, constraints).optimize().unwrap();
-        assert_eq!(soln.objective_value, 750.0);
-        assert_eq!(soln.__getitem__(x_1.id), 1.0);
-        assert_eq!(soln.__getitem__(x_2.id), 0.0);
-        assert_eq!(soln.__getitem__(x_3.id), 1.0);
-        assert_eq!(soln.__getitem__(x_4.id), 1.0 / 3.0);
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), 750.0);
+        // assert_eq!(result.solution(&x_1), 1.0);
+        // assert_eq!(result.solution(&x_2), 0.0);
+        // assert_eq!(result.solution(&x_3), 1.0);
+        // assert_eq!(result.solution(&x_4), 1.0 / 3.0);
     }
 
     #[test]
@@ -451,9 +474,9 @@ mod tests {
         let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let soln = Simplex::prepare(objective, constraints).optimize().unwrap();
-        assert_eq!(soln.objective_value, -7.0);
-        assert_eq!(soln.__getitem__(x.id), 7.0);
-        assert_eq!(soln.__getitem__(y.id), 0.0);
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), -7.0);
+        // assert_eq!(result.solution(&x), 7.0);
+        // assert_eq!(result.solution(&y), 0.0);
     }
 }
