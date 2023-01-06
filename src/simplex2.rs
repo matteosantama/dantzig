@@ -480,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn test_two_phase_simplex() {
+    fn test_two_phase_simplex_1() {
         let x = Variable::new();
         let y = Variable::new();
 
@@ -497,5 +497,22 @@ mod tests {
             Error::Unbounded => (),
             Error::Infeasible => panic!("problem should be unbounded"),
         }
+    }
+
+    #[test]
+    fn test_two_phase_simplex_2() {
+        let x = Variable::new();
+        let y = Variable::new();
+
+        let objective = AffExpr::new(&[(-2.0, &x), (3.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(-1.0, &x), (1.0, &y)], -1.0);
+        let c_2 = Inequality::new(&[(-1.0, &x), (-2.0, &y)], -2.0);
+        let c_3 = Inequality::new(&[(1.0, &y)], 1.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), -1.0);
+        assert_eq!(result.solution(&x), 2.0);
+        assert_eq!(result.solution(&y), 1.0);
     }
 }
