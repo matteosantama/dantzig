@@ -264,7 +264,7 @@ impl Simplex {
         });
 
         self.x_bar.iter_mut().zip(&self.b).for_each(|(x, k)| {
-            if *k == i {
+            if *k == j {
                 *x = t_bar;
             } else {
                 *x -= t_bar * dx[self.positions[*k]];
@@ -280,7 +280,7 @@ impl Simplex {
         });
 
         self.z_bar.iter_mut().zip(&self.n).for_each(|(z, k)| {
-            if *k == j {
+            if *k == i {
                 *z = s_bar;
             } else {
                 *z -= s_bar * dz[self.positions[*k]];
@@ -517,40 +517,40 @@ mod tests {
         assert_eq!(result.solution(&y), 0.0);
     }
 
-    // #[test]
-    // fn test_two_phase_simplex_1() {
-    //     let x = Variable::new();
-    //     let y = Variable::new();
-    //
-    //     let objective = AffExpr::new(&[(-1.0, &x), (4.0, &y)], 0.0);
-    //     let c_1 = Inequality::new(&[(-2.0, &x), (-1.0, &y)], 4.0);
-    //     let c_2 = Inequality::new(&[(-2.0, &x), (4.0, &y)], -8.0);
-    //     let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
-    //     let constraints = vec![c_1, c_2, c_3];
-    //
-    //     match Simplex::prepare(objective, constraints)
-    //         .optimize()
-    //         .unwrap_err()
-    //     {
-    //         Error::Unbounded => (),
-    //         Error::Infeasible => panic!("problem should be unbounded"),
-    //     }
-    // }
-    //
-    // #[test]
-    // fn test_two_phase_simplex_2() {
-    //     let x = Variable::new();
-    //     let y = Variable::new();
-    //
-    //     let objective = AffExpr::new(&[(-2.0, &x), (3.0, &y)], 0.0);
-    //     let c_1 = Inequality::new(&[(-1.0, &x), (1.0, &y)], -1.0);
-    //     let c_2 = Inequality::new(&[(-1.0, &x), (-2.0, &y)], -2.0);
-    //     let c_3 = Inequality::new(&[(1.0, &y)], 1.0);
-    //     let constraints = vec![c_1, c_2, c_3];
-    //
-    //     let result = Simplex::prepare(objective, constraints).optimize().unwrap();
-    //     assert_eq!(result.objective_value(), -1.0);
-    //     assert_eq!(result.solution(&x), 2.0);
-    //     assert_eq!(result.solution(&y), 1.0);
-    // }
+    #[test]
+    fn test_two_phase_simplex_1() {
+        let x = Variable::new();
+        let y = Variable::new();
+
+        let objective = AffExpr::new(&[(-1.0, &x), (4.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(-2.0, &x), (-1.0, &y)], 4.0);
+        let c_2 = Inequality::new(&[(-2.0, &x), (4.0, &y)], -8.0);
+        let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        match Simplex::prepare(objective, constraints)
+            .optimize()
+            .unwrap_err()
+        {
+            Error::Unbounded => (),
+            Error::Infeasible => panic!("problem should be unbounded"),
+        }
+    }
+
+    #[test]
+    fn test_two_phase_simplex_2() {
+        let x = Variable::new();
+        let y = Variable::new();
+
+        let objective = AffExpr::new(&[(-2.0, &x), (3.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(-1.0, &x), (1.0, &y)], -1.0);
+        let c_2 = Inequality::new(&[(-1.0, &x), (-2.0, &y)], -2.0);
+        let c_3 = Inequality::new(&[(1.0, &y)], 1.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), -1.0);
+        assert_eq!(result.solution(&x), 2.0);
+        assert_eq!(result.solution(&y), 1.0);
+    }
 }
