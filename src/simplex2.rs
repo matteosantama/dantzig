@@ -271,7 +271,7 @@ impl Simplex {
             assert!(!s.is_nan() && !s.is_infinite());
             assert!(!t.is_nan() && !t.is_infinite());
             if s < 0.0 {
-                return Err(Error::Unbounded);
+                return Err(Error::Infeasible);
             }
             self.pivot(i, j, t, s, &dx, &dz);
         }
@@ -301,12 +301,9 @@ impl Simplex {
         let is_dual_feasible = self.z.iter().all(|k| *k >= 0.0);
 
         match (is_primal_feasible, is_dual_feasible) {
-            (true, true) => Ok(Solution::from(self)),
+            (true, true) => Ok(self.into()),
             (true, false) => self.run_primal_simplex(),
-            (false, true) => self.run_dual_simplex().map_err(|err| match err {
-                Error::Unbounded => Error::Infeasible,
-                Error::Infeasible => panic!("dual problem was assumed feasible"),
-            }),
+            (false, true) => self.run_dual_simplex(),
             (false, false) => todo!(),
         }
     }
