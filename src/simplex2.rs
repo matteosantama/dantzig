@@ -257,16 +257,16 @@ impl Simplex {
         pivot(&mut self.x, dx, self.positions[i], t);
         pivot(&mut self.x_bar, dx, self.positions[i], t_bar);
         pivot(&mut self.z, dz, self.positions[j], s);
-        // pivot(&mut self.z_bar, dz, self.positions[j], s_bar);
+        pivot(&mut self.z_bar, dz, self.positions[j], s_bar);
 
-        dbg!(&self.n, j, s_bar, &dz, &self.positions);
-        self.z_bar.iter_mut().zip(&self.n).for_each(|(z, k)| {
-            if *k == j {
-                *z = s_bar;
-            } else {
-                *z -= s_bar * dz[self.positions[*k]];
-            }
-        });
+        // self.z_bar.iter_mut().zip(&self.n).for_each(|(z, k)| {
+        // i "works" here, but I'm pretty sure it should be j
+        //     if *k == i {
+        //         *z = s_bar;
+        //     } else {
+        //         *z -= s_bar * dz[self.positions[*k]];
+        //     }
+        // });
 
         self.swap(i, j);
     }
@@ -285,12 +285,12 @@ impl Simplex {
             .zip(&self.x)
             .zip(&self.x_bar)
             .filter(|((_, _), x_bar_i)| **x_bar_i > 0.0)
-            .map(|((i, x_i), x_bar_i)| (i, -*x_i / *x_bar_i))
+            .map(|((&i, &x_i), &x_bar_i)| (i, -x_i / x_bar_i))
             .reduce(|(max_i, max_ratio), (i, ratio)| match ratio > max_ratio {
                 true => (i, ratio),
                 false => (max_i, max_ratio),
             })
-            .unwrap_or((&0, f64::NEG_INFINITY));
+            .unwrap_or((0, f64::NEG_INFINITY));
 
         let (j, dual) = self
             .n
@@ -298,12 +298,12 @@ impl Simplex {
             .zip(&self.z)
             .zip(&self.z_bar)
             .filter(|((_, _), z_bar_j)| **z_bar_j > 0.0)
-            .map(|((j, z_j), z_bar_j)| (j, -*z_j / *z_bar_j))
+            .map(|((&j, &z_j), &z_bar_j)| (j, -z_j / z_bar_j))
             .reduce(|(max_j, max_ratio), (j, ratio)| match ratio > max_ratio {
                 true => (j, ratio),
                 false => (max_j, max_ratio),
             })
-            .unwrap_or((&0, f64::NEG_INFINITY));
+            .unwrap_or((0, f64::NEG_INFINITY));
 
         if primal <= 0.0 && dual <= 0.0 {
             return None;
@@ -312,11 +312,11 @@ impl Simplex {
         let mu = match dual > primal {
             true => Mu {
                 star: 1.0 / dual,
-                step: Step::Primal(*j),
+                step: Step::Primal(j),
             },
             false => Mu {
                 star: 1.0 / primal,
-                step: Step::Dual(*i),
+                step: Step::Dual(i),
             },
         };
         Some(mu)
@@ -329,20 +329,7 @@ impl Simplex {
         basis_matrix: &CscMatrix,
     ) -> Result<Self, Error> {
         let dx = self.solve_for_dx(j, basis_matrix);
-        let i = self
-            .x
-            .iter()
-            .zip(&self.x_bar)
-            .map(|(x_i, x_bar_i)| x_i + mu_star * x_bar_i)
-            .zip(&dx)
-            .map(|(denominator, dx_i)| *dx_i / denominator)
-            .enumerate()
-            .reduce(|(max_i, max_ratio), (i, ratio)| match ratio > max_ratio {
-                true => (i, ratio),
-                false => (max_i, max_ratio),
-            })
-            .map(|(i, _)| self.b[i])
-            .unwrap();
+        let i = pick_exit_index(mu_star, &self.x, &self.x_bar, &dx, &self.b);
         let dz = self.solve_for_dz(i, basis_matrix);
 
         let t = self.x[self.positions[i]] / dx[self.positions[i]];
@@ -365,20 +352,7 @@ impl Simplex {
         basis_matrix: &CscMatrix,
     ) -> Result<Self, Error> {
         let dz = self.solve_for_dz(i, basis_matrix);
-        let j = self
-            .z
-            .iter()
-            .zip(&self.z_bar)
-            .map(|(z_j, z_bar_j)| z_j + mu_star * *z_bar_j)
-            .zip(&dz)
-            .map(|(denominator, dz_j)| *dz_j / denominator)
-            .enumerate()
-            .reduce(|(max_j, max_ratio), (j, ratio)| match ratio > max_ratio {
-                true => (j, ratio),
-                false => (max_j, max_ratio),
-            })
-            .map(|(j, _)| self.n[j])
-            .unwrap();
+        let j = pick_exit_index(mu_star, &self.z, &self.z_bar, &dz, &self.n);
         let dx = self.solve_for_dx(j, basis_matrix);
 
         let s = self.z[self.positions[j]] / dz[self.positions[j]];
@@ -401,7 +375,7 @@ impl Simplex {
                 Step::Primal(j) => self.primal_step(j, mu.star, &basis_matrix)?,
                 Step::Dual(i) => self.dual_step(i, mu.star, &basis_matrix)?,
             };
-            return result.optimize()
+            return result.optimize();
         }
         Ok(self)
     }
@@ -435,18 +409,33 @@ enum Step {
     Dual(usize),
 }
 
-fn pivot(values: &mut [f64], delta: &[f64], index: usize, multiplier: f64) {
+fn pivot(values: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
     values
         .iter_mut()
         .zip(delta.iter())
         .enumerate()
         .for_each(|(i, (v_i, delta_i))| {
             if i == index {
-                *v_i = multiplier;
+                *v_i = step_length;
             } else {
-                *v_i -= multiplier * delta_i;
+                *v_i -= step_length * delta_i;
             }
         });
+}
+
+fn pick_exit_index(mu_star: f64, xz: &[f64], xz_bar: &[f64], dxz: &[f64], bn: &[usize]) -> usize {
+    xz.iter()
+        .zip(xz_bar)
+        .map(|(xz_k, xz_bar_k)| xz_k + mu_star * xz_bar_k)
+        .zip(dxz)
+        .map(|(denominator, dxz_k)| *dxz_k / denominator)
+        .enumerate()
+        .reduce(|(max_k, max_ratio), (k, ratio)| match ratio > max_ratio {
+            true => (k, ratio),
+            false => (max_k, max_ratio),
+        })
+        .map(|(k, _)| bn[k])
+        .unwrap()
 }
 
 #[cfg(test)]
