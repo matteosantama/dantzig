@@ -256,7 +256,7 @@ impl Simplex {
         assert!(!s_bar.is_infinite() && !s_bar.is_nan());
 
         self.x.iter_mut().zip(&self.b).for_each(|(x, k)| {
-            if *k == j {
+            if *k == i {
                 *x = t;
             } else {
                 *x -= t * dx[self.positions[*k]];
@@ -264,7 +264,7 @@ impl Simplex {
         });
 
         self.x_bar.iter_mut().zip(&self.b).for_each(|(x, k)| {
-            if *k == j {
+            if *k == i {
                 *x = t_bar;
             } else {
                 *x -= t_bar * dx[self.positions[*k]];
@@ -272,7 +272,7 @@ impl Simplex {
         });
 
         self.z.iter_mut().zip(&self.n).for_each(|(z, k)| {
-            if *k == i {
+            if *k == j {
                 *z = s;
             } else {
                 *z -= s * dz[self.positions[*k]];
@@ -280,7 +280,7 @@ impl Simplex {
         });
 
         self.z_bar.iter_mut().zip(&self.n).for_each(|(z, k)| {
-            if *k == i {
+            if *k == j {
                 *z = s_bar;
             } else {
                 *z -= s_bar * dz[self.positions[*k]];
@@ -358,8 +358,6 @@ impl Simplex {
             })
             .map(|(i, _)| self.b[i])
             .unwrap();
-        dbg!(mu_star, &dx, &self.x, &self.x_bar, &self.b);
-        dbg!(i, j);
         let dz = self.solve_for_dz(i, basis_matrix);
 
         self.pivot(i, j, &dx, &dz);
@@ -388,12 +386,14 @@ impl Simplex {
     }
 
     fn optimize(mut self) -> Result<Self, Error> {
+        dbg!(&self.x, &self.b);
         while let Some(mu) = self.solve_for_mu() {
             let basis_matrix = self.basis_matrix();
             match mu.step {
                 Step::Primal(j) => self.primal_step(j, mu.star, &basis_matrix),
                 Step::Dual(i) => self.dual_step(i, mu.star, &basis_matrix),
             }
+            dbg!(&self.x, &self.b);
         }
         Ok(self)
     }
