@@ -180,26 +180,30 @@ impl Simplex {
         let obj_const = objective.constant;
         let obj_coefs = align(&objective.linexpr, &indexer);
 
-        // STEP 4: Align the constraints and store as CSC matrix.
-        let mut coords = vec![];
-        for (i, constraint) in equality_constraints.iter().enumerate() {
-            let coefs = &constraint.linexpr.coefs;
-            let vars = &constraint.linexpr.vars;
-            for (coef, var) in coefs.iter().zip(vars) {
-                let value = (i, indexer[&var.id], *coef);
-                coords.push(value);
-            }
-        }
-        let m = equality_constraints.len();
-        let n = obj_coefs.len();
-
-        // STEP 5: Prepare remaining initialization parameters
+        // STEP 4: Prepare remaining initialization parameters
         let x = equality_constraints.iter().map(|c| c.b).collect();
         let z = ids
             .iter()
             .filter(|id| orig_vars.contains(id))
             .map(|id| -obj_coefs[indexer[id]])
             .collect();
+
+        // STEP 5: Align the constraints and store as CSC matrix.
+        let m = equality_constraints.len();
+        let n = obj_coefs.len();
+        let coords = equality_constraints
+            .into_iter()
+            .map(|c| c.linexpr)
+            .enumerate()
+            .flat_map(|(i, linexpr)| {
+                linexpr
+                    .vars
+                    .into_iter()
+                    .map(|var| indexer[&var.id])
+                    .zip(linexpr.coefs)
+                    .map(move |(j, coef)| (i, j, coef))
+            })
+            .collect::<Vec<(usize, usize, f64)>>();
 
         Self {
             obj_coefs,
