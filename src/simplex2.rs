@@ -53,12 +53,16 @@ struct Inequality {
 
 impl Inequality {
     fn slacken(mut self) -> Equality {
-        let var = Variable::new();
-        self.linexpr.vars.push(var);
+        let slack = Variable::new();
+        let slack_id = slack.id;
+
+        self.linexpr.vars.push(slack);
         self.linexpr.coefs.push(1.0);
+
         Equality {
             linexpr: self.linexpr,
             b: self.b,
+            slack_id,
         }
     }
 
@@ -73,6 +77,8 @@ impl Inequality {
 struct Equality {
     linexpr: LinExpr,
     b: f64,
+    // Variable ID of the injected slack variable
+    slack_id: usize,
 }
 
 #[derive(Debug)]
@@ -81,10 +87,10 @@ enum Error {
     Infeasible,
 }
 
-fn align(linexpr: &LinExpr, indexer: &HashMap<usize, usize>) -> Vec<f64> {
-    let mut aligned = vec![0.0; indexer.len()];
+fn align(linexpr: &LinExpr, indices: &HashMap<usize, usize>) -> Vec<f64> {
+    let mut aligned = vec![0.0; indices.len()];
     for (i, var) in linexpr.vars.iter().enumerate() {
-        aligned[indexer[&var.id]] = linexpr.coefs[i];
+        aligned[indices[&var.id]] = linexpr.coefs[i];
     }
     aligned
 }
@@ -105,12 +111,14 @@ struct Simplex {
 
     // Store the IDs of all basic variables
     basic_set: HashSet<usize>,
+    // Store the IDs of all the slack variables
+    slack_set: HashSet<usize>,
 
     // If `ids[i] = k`, then variable `i` (identified by position) has ID `k`.
     ids: Vec<usize>,
     // Map a variable ID to its index in the problem. In particular, the following must
-    // always be true: `ids[indexer[i]] == i`.
-    indexer: HashMap<usize, usize>,
+    // always be true: `ids[indices[i]] == i`.
+    indices: HashMap<usize, usize>,
 
     // These are the "solution vectors" corresponding to the primal and dual problems.
     x: Vec<f64>,
@@ -129,30 +137,23 @@ impl Debug for Simplex {
 
 impl Simplex {
     fn prepare(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
-        // STEP 0: Collect and identify all original variables, before we add any slack
-        let orig_vars = objective
-            .linexpr
-            .vars
-            .iter()
-            .map(|var| var.id)
-            .chain(
-                constraints
-                    .iter()
-                    .flat_map(|c| c.linexpr.vars.iter().map(|var| var.id)),
-            )
-            .collect::<HashSet<usize>>();
-
+        // TODO: Refactor this function to make it simpler.
         // STEP 1: Insert slack variables into each constraint, and convert the inequalities
         // to equalities.
+        let mut slack_set = HashSet::new();
         let equality_constraints = constraints
             .into_iter()
-            .map(|x| x.slacken())
+            .map(|x| {
+                let slack = x.slacken();
+                slack_set.insert(slack.slack_id);
+                slack
+            })
             .collect::<Vec<_>>();
 
         // STEP 2: Iterate through all variables in the problem, and assign a column index
         // to each.
         let mut ids = Vec::new();
-        let mut indexer = HashMap::new();
+        let mut indices = HashMap::new();
         objective
             .linexpr
             .vars
@@ -164,7 +165,7 @@ impl Simplex {
                     .flat_map(|c| c.linexpr.vars.iter().map(|var| var.id)),
             )
             .for_each(|id| {
-                if let Entry::Vacant(e) = indexer.entry(id) {
+                if let Entry::Vacant(e) = indices.entry(id) {
                     e.insert(ids.len());
                     ids.push(id);
                 }
@@ -172,14 +173,14 @@ impl Simplex {
 
         // STEP 3: Align the objective to these new indices
         let obj_const = objective.constant;
-        let obj_coefs = align(&objective.linexpr, &indexer);
+        let obj_coefs = align(&objective.linexpr, &indices);
 
         // STEP 4: Prepare remaining initialization parameters
         let x = equality_constraints.iter().map(|c| c.b).collect();
         let z = ids
             .iter()
-            .filter(|id| orig_vars.contains(id))
-            .map(|id| -obj_coefs[indexer[id]])
+            .filter(|id| !slack_set.contains(id))
+            .map(|id| -obj_coefs[indices[id]])
             .collect();
 
         // STEP 5: Align the constraints and store as CSC matrix.
@@ -193,7 +194,7 @@ impl Simplex {
                 linexpr
                     .vars
                     .into_iter()
-                    .map(|var| indexer[&var.id])
+                    .map(|var| indices[&var.id])
                     .zip(linexpr.coefs)
                     .map(move |(j, coef)| (i, j, coef))
             })
@@ -207,19 +208,12 @@ impl Simplex {
             n: (0..n - m).collect(),
             positions: (0..n - m).chain(0..m).collect(),
             basic_set: ids[n - m..].iter().cloned().collect(),
+            slack_set,
             ids,
-            indexer,
+            indices,
             x,
             z,
         }
-    }
-
-    fn phase_one(simplex: Simplex) -> Self {
-        todo!()
-    }
-
-    fn phase_two(simplex: Simplex) -> Self {
-        todo!()
     }
 
     fn solve_for_dx(&self, j: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
@@ -302,14 +296,21 @@ impl Simplex {
         Ok(self)
     }
 
-    fn run_two_phase_simplex(self) -> Result<Self, Error> {
-        let orig_obj_coefs = self.obj_coefs.to_vec();
-        let phase_one = Simplex::phase_one(self);
-        let result = phase_one
+    fn run_two_phase_simplex(mut self) -> Result<Self, Error> {
+        let orig_z = self.z.to_vec();
+        self.z = self
+            .ids
+            .iter()
+            .filter(|id| !self.slack_set.contains(id))
+            .map(|_| 1.0)
+            .collect();
+
+        let mut phase_one = self
             .optimize()
             .expect("Phase I problem should always be dual feasible");
-        let phase_two = Simplex::phase_two(result);
-        phase_two.optimize()
+
+        phase_one.z = orig_z;
+        phase_one.optimize()
     }
 
     fn optimize(self) -> Result<Self, Error> {
@@ -340,7 +341,7 @@ impl Simplex {
 
     fn solution(&self, var: &Variable) -> f64 {
         match self.basic_set.contains(&var.id) {
-            true => self.x[self.positions[self.indexer[&var.id]]],
+            true => self.x[self.positions[self.indices[&var.id]]],
             false => 0.0,
         }
     }
