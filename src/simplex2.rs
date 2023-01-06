@@ -80,26 +80,6 @@ enum Error {
     Infeasible,
 }
 
-// struct Solution {
-//     objective_value: f64,
-//     solution: HashMap<usize, f64>,
-// }
-//
-// impl Solution {
-//     fn __getitem__(&self, id: usize) -> f64 {
-//         self.solution.get(&id).cloned().unwrap_or(0.0)
-//     }
-// }
-//
-// impl From<Simplex> for Solution {
-//     fn from(simplex: Simplex) -> Self {
-//         Self {
-//             objective_value: simplex.objective_value(),
-//             solution: simplex.solution(),
-//         }
-//     }
-// }
-
 fn align(linexpr: &LinExpr, indexer: &HashMap<usize, usize>) -> Vec<f64> {
     let mut aligned = vec![0.0; indexer.len()];
     for (i, var) in linexpr.vars.iter().enumerate() {
@@ -123,15 +103,15 @@ struct Simplex {
     positions: Vec<usize>,
 
     // Store the IDs of all basic variables
-    // basic_set: HashSet<usize>,
+    basic_set: HashSet<usize>,
 
     // If `ids[i] = k`, then variable `i` (identified by position) has ID `k`.
     ids: Vec<usize>,
     // Map a variable ID to its index in the problem. In particular, the following must
     // always be true: `ids[indexer[i]] == i`.
-    #[allow(dead_code)]
     indexer: HashMap<usize, usize>,
 
+    // These are the "solution vectors" corresponding to the primal and dual problems.
     x: Vec<f64>,
     z: Vec<f64>,
 }
@@ -215,7 +195,7 @@ impl Simplex {
             b: (n - m..n).collect(),
             n: (0..n - m).collect(),
             positions: (0..n - m).chain(0..m).collect(),
-            // basic_set: ids[n - m..].iter().cloned().collect(),
+            basic_set: ids[n - m..].iter().cloned().collect(),
             ids,
             indexer,
             x,
@@ -244,6 +224,8 @@ impl Simplex {
     }
 
     fn swap(&mut self, i: usize, j: usize) {
+        assert!(self.basic_set.remove(&self.ids[i]));
+        assert!(self.basic_set.insert(self.ids[j]));
         self.b[self.positions[i]] = j;
         self.n[self.positions[j]] = i;
         self.positions.swap(i, j);
@@ -270,8 +252,6 @@ impl Simplex {
                 return Err(Error::Unbounded);
             }
             self.pivot(i, j, t, s, &dx, &dz);
-            // assert!(self.basic_set.remove(&i));
-            // assert!(self.basic_set.insert(j));
         }
         Ok(self)
     }
@@ -289,8 +269,6 @@ impl Simplex {
                 return Err(Error::Infeasible);
             }
             self.pivot(i, j, t, s, &dx, &dz);
-            // assert!(self.basic_set.remove(&i));
-            // assert!(self.basic_set.insert(j));
         }
         Ok(self)
     }
@@ -339,12 +317,10 @@ impl Simplex {
     }
 
     fn solution(&self, var: &Variable) -> f64 {
-        // if self.basic_set.contains(&var.id) {
-        //     self.x[self.positions[self.indexer[&var.id]]]
-        // } else {
-        //     0.0
-        // }
-        todo!()
+        match self.basic_set.contains(&var.id) {
+            true => self.x[self.positions[self.indexer[&var.id]]],
+            false => 0.0,
+        }
     }
 }
 
@@ -402,8 +378,8 @@ mod tests {
 
         let result = Simplex::prepare(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), 31.0);
-        // assert_eq!(result.solution(&x), 4.0);
-        // assert_eq!(result.solution(&y), 5.0);
+        assert_eq!(result.solution(&x), 4.0);
+        assert_eq!(result.solution(&y), 5.0);
     }
 
     #[test]
@@ -420,9 +396,9 @@ mod tests {
 
         let result = Simplex::prepare(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), 13.0);
-        // assert_eq!(result.solution(&x_1), 2.0);
-        // assert_eq!(result.solution(&x_2), 0.0);
-        // assert_eq!(result.solution(&x_3), 1.0);
+        assert_eq!(result.solution(&x_1), 2.0);
+        assert_eq!(result.solution(&x_2), 0.0);
+        assert_eq!(result.solution(&x_3), 1.0);
     }
 
     #[test]
@@ -457,10 +433,10 @@ mod tests {
 
         let result = Simplex::prepare(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), 750.0);
-        // assert_eq!(result.solution(&x_1), 1.0);
-        // assert_eq!(result.solution(&x_2), 0.0);
-        // assert_eq!(result.solution(&x_3), 1.0);
-        // assert_eq!(result.solution(&x_4), 1.0 / 3.0);
+        assert_eq!(result.solution(&x_1), 1.0);
+        assert_eq!(result.solution(&x_2), 0.0);
+        assert_eq!(result.solution(&x_3), 1.0);
+        assert_eq!(result.solution(&x_4), 1.0 / 3.0);
     }
 
     #[test]
@@ -476,7 +452,7 @@ mod tests {
 
         let result = Simplex::prepare(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), -7.0);
-        // assert_eq!(result.solution(&x), 7.0);
-        // assert_eq!(result.solution(&y), 0.0);
+        assert_eq!(result.solution(&x), 7.0);
+        assert_eq!(result.solution(&y), 0.0);
     }
 }
