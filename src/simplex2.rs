@@ -234,8 +234,15 @@ impl Simplex {
     fn swap(&mut self, i: usize, j: usize) {
         self.b[self.positions[i]] = j;
         self.n[self.positions[j]] = i;
-
         self.positions.swap(i, j);
+    }
+
+    fn step_lengths(&self, i: usize, j: usize, dx: &[f64], dz: &[f64]) -> (f64, f64) {
+        let t = self.x[self.positions[i]] / dx[self.positions[i]];
+        let s = self.z[self.positions[j]] / dz[self.positions[j]];
+        assert!(!t.is_nan() && !t.is_infinite());
+        assert!(!s.is_nan() && !s.is_infinite());
+        (t, s)
     }
 
     fn run_primal_simplex(&mut self) -> Result<Solution, Error> {
@@ -246,16 +253,13 @@ impl Simplex {
             let i = pick_exit(&self.b, &dx, &self.x);
             let dz = self.solve_for_dz(i, &basis_matrix);
 
-            let t = self.x[self.positions[i]] / dx[self.positions[i]];
-            let s = self.z[self.positions[j]] / dz[self.positions[j]];
-            assert!(!t.is_nan() && !t.is_infinite());
-            assert!(!s.is_nan() && !s.is_infinite());
+            let (t, s) = self.step_lengths(i, j, &dx, &dz);
             if t < 0.0 {
                 return Err(Error::Unbounded);
             }
             self.pivot(i, j, t, s, &dx, &dz);
         }
-        Ok(Solution::from(self))
+        Ok(self.into())
     }
 
     fn run_dual_simplex(&mut self) -> Result<Solution, Error> {
@@ -266,16 +270,13 @@ impl Simplex {
             let j = pick_exit(&self.n, &dz, &self.z);
             let dx = self.solve_for_dx(j, &basis_matrix);
 
-            let s = self.z[self.positions[j]] / dz[self.positions[j]];
-            let t = self.x[self.positions[i]] / dx[self.positions[i]];
-            assert!(!s.is_nan() && !s.is_infinite());
-            assert!(!t.is_nan() && !t.is_infinite());
+            let (t, s) = self.step_lengths(i, j, &dx, &dz);
             if s < 0.0 {
                 return Err(Error::Infeasible);
             }
             self.pivot(i, j, t, s, &dx, &dz);
         }
-        Ok(Solution::from(self))
+        Ok(self.into())
     }
 
     fn pivot(&mut self, i: usize, j: usize, t: f64, s: f64, dx: &[f64], dz: &[f64]) {
@@ -335,23 +336,29 @@ fn try_pick_enter(set: &[usize], coefs: &[f64]) -> Option<usize> {
 }
 
 fn pick_exit(set: &[usize], n: &[f64], d: &[f64]) -> usize {
-    debug_assert_eq!(n.len(), d.len());
+    debug_assert!(!set.is_empty());
+    debug_assert_eq!(set.len(), n.len());
+    debug_assert_eq!(set.len(), d.len());
 
     let mut max_ratio_i = 0;
     let mut max_ratio = n[0] / d[0];
 
-    n.iter().zip(d).enumerate().for_each(|(i, (n_i, d_i))| {
-        let ratio = if *n_i == 0.0 && *d_i == 0.0 {
-            0.0
-        } else {
-            *n_i / *d_i
-        };
-        assert!(!ratio.is_infinite() && !ratio.is_nan());
-        if ratio > max_ratio {
-            max_ratio = ratio;
-            max_ratio_i = i;
-        }
-    });
+    n.iter()
+        .zip(d)
+        .enumerate()
+        .skip(1)
+        .for_each(|(i, (n_i, d_i))| {
+            let ratio = if *n_i == 0.0 && *d_i == 0.0 {
+                0.0
+            } else {
+                *n_i / *d_i
+            };
+            assert!(!ratio.is_infinite() && !ratio.is_nan());
+            if ratio > max_ratio {
+                max_ratio = ratio;
+                max_ratio_i = i;
+            }
+        });
     set[max_ratio_i]
 }
 
