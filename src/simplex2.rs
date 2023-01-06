@@ -1,6 +1,7 @@
 use crate::linalg2::{lu_solve, CscMatrix, Matrix};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{Debug, Formatter};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -114,6 +115,16 @@ struct Simplex {
     // These are the "solution vectors" corresponding to the primal and dual problems.
     x: Vec<f64>,
     z: Vec<f64>,
+}
+
+impl Debug for Simplex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Simplex {{ objective_value: {} }}",
+            self.objective_value()
+        )
+    }
 }
 
 impl Simplex {
@@ -239,40 +250,6 @@ impl Simplex {
         (t, s)
     }
 
-    fn run_primal_simplex(mut self) -> Result<Simplex, Error> {
-        while let Some(j) = try_pick_enter(&self.n, &self.z) {
-            let basis_matrix = self.constraints.collect_columns(&self.b);
-
-            let dx = self.solve_for_dx(j, &basis_matrix);
-            let i = pick_exit(&self.b, &dx, &self.x);
-            let dz = self.solve_for_dz(i, &basis_matrix);
-
-            let (t, s) = self.step_lengths(i, j, &dx, &dz);
-            if t < 0.0 {
-                return Err(Error::Unbounded);
-            }
-            self.pivot(i, j, t, s, &dx, &dz);
-        }
-        Ok(self)
-    }
-
-    fn run_dual_simplex(mut self) -> Result<Simplex, Error> {
-        while let Some(i) = try_pick_enter(&self.b, &self.x) {
-            let basis_matrix = self.constraints.collect_columns(&self.b);
-
-            let dz = self.solve_for_dz(i, &basis_matrix);
-            let j = pick_exit(&self.n, &dz, &self.z);
-            let dx = self.solve_for_dx(j, &basis_matrix);
-
-            let (t, s) = self.step_lengths(i, j, &dx, &dz);
-            if s < 0.0 {
-                return Err(Error::Infeasible);
-            }
-            self.pivot(i, j, t, s, &dx, &dz);
-        }
-        Ok(self)
-    }
-
     fn pivot(&mut self, i: usize, j: usize, t: f64, s: f64, dx: &[f64], dz: &[f64]) {
         self.x.iter_mut().zip(&self.b).for_each(|(x, k)| {
             if *k == i {
@@ -291,29 +268,74 @@ impl Simplex {
         self.swap(i, j);
     }
 
-    fn optimize(mut self) -> Result<Simplex, Error> {
-        let is_primal_feasible = self.x.iter().all(|k| *k >= 0.0);
-        let is_dual_feasible = self.z.iter().all(|k| *k >= 0.0);
+    fn run_primal_simplex(mut self) -> Result<Self, Error> {
+        while let Some(j) = try_pick_enter(&self.n, &self.z) {
+            let basis_matrix = self.constraints.collect_columns(&self.b);
 
-        match (is_primal_feasible, is_dual_feasible) {
-            (true, true) => Ok(self.into()),
+            let dx = self.solve_for_dx(j, &basis_matrix);
+            let i = pick_exit(&self.b, &dx, &self.x);
+            let dz = self.solve_for_dz(i, &basis_matrix);
+
+            let (t, s) = self.step_lengths(i, j, &dx, &dz);
+            if t < 0.0 {
+                return Err(Error::Unbounded);
+            }
+            self.pivot(i, j, t, s, &dx, &dz);
+        }
+        Ok(self)
+    }
+
+    fn run_dual_simplex(mut self) -> Result<Self, Error> {
+        while let Some(i) = try_pick_enter(&self.b, &self.x) {
+            let basis_matrix = self.constraints.collect_columns(&self.b);
+
+            let dz = self.solve_for_dz(i, &basis_matrix);
+            let j = pick_exit(&self.n, &dz, &self.z);
+            let dx = self.solve_for_dx(j, &basis_matrix);
+
+            let (t, s) = self.step_lengths(i, j, &dx, &dz);
+            if s < 0.0 {
+                return Err(Error::Infeasible);
+            }
+            self.pivot(i, j, t, s, &dx, &dz);
+        }
+        Ok(self)
+    }
+
+    fn run_two_phase_simplex(self) -> Result<Self, Error> {
+        let orig_obj_coefs = self.obj_coefs.to_vec();
+        let phase_one = Simplex::phase_one(self);
+        let result = phase_one
+            .optimize()
+            .expect("Phase I problem should always be dual feasible");
+        let phase_two = Simplex::phase_two(result);
+        phase_two.optimize()
+    }
+
+    fn optimize(self) -> Result<Self, Error> {
+        match (self.is_primal_feasible(), self.is_dual_feasible()) {
+            (true, true) => Ok(self),
             (true, false) => self.run_primal_simplex(),
             (false, true) => self.run_dual_simplex(),
-            (false, false) => {
-                let mut phase_one = Simplex::phase_one(self);
-                let result = phase_one.optimize()?;
-                let mut phase_two = Simplex::phase_two(result);
-                phase_two.optimize()
-            }
+            (false, false) => self.run_two_phase_simplex(),
         }
     }
 
+    fn is_primal_feasible(&self) -> bool {
+        self.x.iter().all(|k| *k >= 0.0)
+    }
+
+    fn is_dual_feasible(&self) -> bool {
+        self.z.iter().all(|k| *k >= 0.0)
+    }
+
     fn objective_value(&self) -> f64 {
-        self.b
-            .iter()
-            .map(|&i| self.obj_coefs[i] * self.x[self.positions[i]])
-            .sum::<f64>()
-            + self.obj_const
+        self.obj_const
+            + self
+                .b
+                .iter()
+                .map(|&i| self.obj_coefs[i] * self.x[self.positions[i]])
+                .sum::<f64>()
     }
 
     fn solution(&self, var: &Variable) -> f64 {
@@ -454,5 +476,25 @@ mod tests {
         assert_eq!(result.objective_value(), -7.0);
         assert_eq!(result.solution(&x), 7.0);
         assert_eq!(result.solution(&y), 0.0);
+    }
+
+    #[test]
+    fn test_two_phase_simplex() {
+        let x = Variable::new();
+        let y = Variable::new();
+
+        let objective = AffExpr::new(&[(-1.0, &x), (4.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(-2.0, &x), (-1.0, &y)], 4.0);
+        let c_2 = Inequality::new(&[(-2.0, &x), (4.0, &y)], -8.0);
+        let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        match Simplex::prepare(objective, constraints)
+            .optimize()
+            .unwrap_err()
+        {
+            Error::Unbounded => (),
+            Error::Infeasible => panic!("problem should be unbounded"),
+        }
     }
 }
