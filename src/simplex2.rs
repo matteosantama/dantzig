@@ -109,16 +109,11 @@ struct Simplex {
     // variable `i` is basic or non-basic.
     positions: Vec<usize>,
 
-    // Store the IDs of all basic variables
-    basic_set: HashSet<usize>,
-    // Store the IDs of all the slack variables
-    slack_set: HashSet<usize>,
+    // Associate the IDs of all basic variables with their corresponding index in `b`
+    basic_pos_by_id: HashMap<usize, usize>,
 
     // If `ids[i] = k`, then variable `i` (identified by position) has ID `k`.
     ids: Vec<usize>,
-    // Map a variable ID to its index in the problem. In particular, the following must
-    // always be true: `ids[indices[i]] == i`.
-    indices: HashMap<usize, usize>,
 
     // These are the "solution vectors" corresponding to the primal and dual problems.
     x: Vec<f64>,
@@ -143,13 +138,13 @@ impl Simplex {
         // TODO: Refactor this function to make it simpler.
         // STEP 1: Insert slack variables into each constraint, and convert the inequalities
         // to equalities.
-        let mut slack_set = HashSet::new();
+        let mut slack_ids = HashSet::new();
         let equality_constraints = constraints
             .into_iter()
-            .map(|x| {
-                let slack = x.slacken();
-                slack_set.insert(slack.slack_id);
-                slack
+            .map(|inequality| {
+                let equality = inequality.slacken();
+                slack_ids.insert(equality.slack_id);
+                equality
             })
             .collect::<Vec<_>>();
 
@@ -157,6 +152,7 @@ impl Simplex {
         // to each.
         let mut ids = Vec::new();
         let mut indices = HashMap::new();
+        let mut basic_pos_by_id = HashMap::new();
         objective
             .linexpr
             .vars
@@ -170,6 +166,9 @@ impl Simplex {
             .for_each(|id| {
                 if let Entry::Vacant(e) = indices.entry(id) {
                     e.insert(ids.len());
+                    if slack_ids.contains(&id) {
+                        basic_pos_by_id.insert(id, ids.len());
+                    }
                     ids.push(id);
                 }
             });
@@ -182,7 +181,7 @@ impl Simplex {
         let x = equality_constraints.iter().map(|c| c.b).collect::<Vec<_>>();
         let z = ids
             .iter()
-            .filter(|id| !slack_set.contains(id))
+            .filter(|id| !slack_ids.contains(id))
             .map(|id| -obj_coefs[indices[id]])
             .collect::<Vec<_>>();
 
@@ -213,10 +212,8 @@ impl Simplex {
             b: (n - m..n).collect(),
             n: (0..n - m).collect(),
             positions: (0..n - m).chain(0..m).collect(),
-            basic_set: ids[n - m..].iter().cloned().collect(),
-            slack_set,
+            basic_pos_by_id,
             ids,
-            indices,
             x,
             z,
             x_bar,
@@ -236,56 +233,41 @@ impl Simplex {
         self.constraints.collect_columns(&self.n).neg_t_dot(v)
     }
 
+    /// Index `j` enters the basis and `i` exits.
     fn swap(&mut self, i: usize, j: usize) {
-        assert!(self.basic_set.remove(&self.ids[i]));
-        assert!(self.basic_set.insert(self.ids[j]));
+        self.basic_pos_by_id.remove(&self.ids[i]).unwrap();
+        assert!(self
+            .basic_pos_by_id
+            .insert(self.ids[j], self.positions[i])
+            .is_none());
+
         self.b[self.positions[i]] = j;
         self.n[self.positions[j]] = i;
+
         self.positions.swap(i, j);
     }
 
-    fn pivot(&mut self, i: usize, j: usize, dx: &[f64], dz: &[f64]) {
-        let t = self.x[self.positions[i]] / dx[self.positions[i]];
+    fn pivot(&mut self, i: usize, j: usize, t: f64, s: f64, dx: &[f64], dz: &[f64]) {
         let t_bar = self.x_bar[self.positions[i]] / dx[self.positions[i]];
-        let s = self.z[self.positions[j]] / dz[self.positions[j]];
         let s_bar = self.z_bar[self.positions[j]] / dz[self.positions[j]];
 
-        assert!(!t.is_infinite() && !t.is_nan());
         assert!(!t_bar.is_infinite() && !t_bar.is_nan());
-        assert!(!s.is_infinite() && !s.is_nan());
         assert!(!s_bar.is_infinite() && !s_bar.is_nan());
 
-        self.x.iter_mut().zip(&self.b).for_each(|(x, k)| {
-            if *k == i {
-                *x = t;
-            } else {
-                *x -= t * dx[self.positions[*k]];
-            }
-        });
+        pivot(&mut self.x, dx, self.positions[i], t);
+        pivot(&mut self.x_bar, dx, self.positions[i], t_bar);
+        pivot(&mut self.z, dz, self.positions[j], s);
+        // pivot(&mut self.z_bar, dz, self.positions[j], s_bar);
 
-        self.x_bar.iter_mut().zip(&self.b).for_each(|(x, k)| {
-            if *k == j {
-                *x = t_bar;
-            } else {
-                *x -= t_bar * dx[self.positions[*k]];
-            }
-        });
-
-        self.z.iter_mut().zip(&self.n).for_each(|(z, k)| {
-            if *k == j {
-                *z = s;
-            } else {
-                *z -= s * dz[self.positions[*k]];
-            }
-        });
-
+        dbg!(&self.n, j, s_bar, &dz, &self.positions);
         self.z_bar.iter_mut().zip(&self.n).for_each(|(z, k)| {
-            if *k == i {
+            if *k == j {
                 *z = s_bar;
             } else {
                 *z -= s_bar * dz[self.positions[*k]];
             }
         });
+
         self.swap(i, j);
     }
 
@@ -340,7 +322,12 @@ impl Simplex {
         Some(mu)
     }
 
-    fn primal_step(&mut self, j: usize, mu_star: f64, basis_matrix: &CscMatrix) {
+    fn primal_step(
+        mut self,
+        j: usize,
+        mu_star: f64,
+        basis_matrix: &CscMatrix,
+    ) -> Result<Self, Error> {
         let dx = self.solve_for_dx(j, basis_matrix);
         let i = self
             .x
@@ -358,10 +345,25 @@ impl Simplex {
             .unwrap();
         let dz = self.solve_for_dz(i, basis_matrix);
 
-        self.pivot(i, j, &dx, &dz);
+        let t = self.x[self.positions[i]] / dx[self.positions[i]];
+        let s = self.z[self.positions[j]] / dz[self.positions[j]];
+
+        assert!(!t.is_infinite() && !t.is_nan());
+        assert!(!s.is_infinite() && !s.is_nan());
+
+        if t < 0.0 {
+            return Err(Error::Unbounded);
+        }
+        self.pivot(i, j, t, s, &dx, &dz);
+        Ok(self)
     }
 
-    fn dual_step(&mut self, i: usize, mu_star: f64, basis_matrix: &CscMatrix) {
+    fn dual_step(
+        mut self,
+        i: usize,
+        mu_star: f64,
+        basis_matrix: &CscMatrix,
+    ) -> Result<Self, Error> {
         let dz = self.solve_for_dz(i, basis_matrix);
         let j = self
             .z
@@ -379,16 +381,27 @@ impl Simplex {
             .unwrap();
         let dx = self.solve_for_dx(j, basis_matrix);
 
-        self.pivot(i, j, &dx, &dz);
+        let s = self.z[self.positions[j]] / dz[self.positions[j]];
+        let t = self.x[self.positions[i]] / dx[self.positions[i]];
+
+        assert!(!s.is_infinite() && !s.is_nan());
+        assert!(!t.is_infinite() && !t.is_nan());
+
+        if s < 0.0 {
+            return Err(Error::Infeasible);
+        }
+        self.pivot(i, j, t, s, &dx, &dz);
+        Ok(self)
     }
 
-    fn optimize(mut self) -> Result<Self, Error> {
-        while let Some(mu) = self.solve_for_mu() {
+    fn optimize(self) -> Result<Self, Error> {
+        if let Some(mu) = self.solve_for_mu() {
             let basis_matrix = self.basis_matrix();
-            match mu.step {
-                Step::Primal(j) => self.primal_step(j, mu.star, &basis_matrix),
-                Step::Dual(i) => self.dual_step(i, mu.star, &basis_matrix),
-            }
+            let result = match mu.step {
+                Step::Primal(j) => self.primal_step(j, mu.star, &basis_matrix)?,
+                Step::Dual(i) => self.dual_step(i, mu.star, &basis_matrix)?,
+            };
+            return result.optimize()
         }
         Ok(self)
     }
@@ -403,9 +416,9 @@ impl Simplex {
     }
 
     fn solution(&self, var: &Variable) -> f64 {
-        match self.basic_set.contains(&var.id) {
-            true => self.x[self.positions[self.indices[&var.id]]],
-            false => 0.0,
+        match self.basic_pos_by_id.get(&var.id) {
+            None => 0.0,
+            Some(index) => self.x[*index],
         }
     }
 }
@@ -420,6 +433,20 @@ struct Mu {
 enum Step {
     Primal(usize),
     Dual(usize),
+}
+
+fn pivot(values: &mut [f64], delta: &[f64], index: usize, multiplier: f64) {
+    values
+        .iter_mut()
+        .zip(delta.iter())
+        .enumerate()
+        .for_each(|(i, (v_i, delta_i))| {
+            if i == index {
+                *v_i = multiplier;
+            } else {
+                *v_i -= multiplier * delta_i;
+            }
+        });
 }
 
 #[cfg(test)]
