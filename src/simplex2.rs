@@ -123,6 +123,9 @@ struct Simplex {
     // These are the "solution vectors" corresponding to the primal and dual problems.
     x: Vec<f64>,
     z: Vec<f64>,
+
+    x_bar: Vec<f64>,
+    z_bar: Vec<f64>,
 }
 
 impl Debug for Simplex {
@@ -176,12 +179,12 @@ impl Simplex {
         let obj_coefs = align(&objective.linexpr, &indices);
 
         // STEP 4: Prepare remaining initialization parameters
-        let x = equality_constraints.iter().map(|c| c.b).collect();
+        let x = equality_constraints.iter().map(|c| c.b).collect::<Vec<_>>();
         let z = ids
             .iter()
             .filter(|id| !slack_set.contains(id))
             .map(|id| -obj_coefs[indices[id]])
-            .collect();
+            .collect::<Vec<_>>();
 
         // STEP 5: Align the constraints and store as CSC matrix.
         let m = equality_constraints.len();
@@ -200,6 +203,9 @@ impl Simplex {
             })
             .collect::<Vec<(usize, usize, f64)>>();
 
+        let x_bar = vec![1.0; x.len()];
+        let z_bar = vec![1.0; z.len()];
+
         Self {
             obj_coefs,
             obj_const,
@@ -213,6 +219,8 @@ impl Simplex {
             indices,
             x,
             z,
+            x_bar,
+            z_bar,
         }
     }
 
@@ -236,98 +244,158 @@ impl Simplex {
         self.positions.swap(i, j);
     }
 
-    fn step_lengths(&self, i: usize, j: usize, dx: &[f64], dz: &[f64]) -> (f64, f64) {
+    fn pivot(&mut self, i: usize, j: usize, dx: &[f64], dz: &[f64]) {
         let t = self.x[self.positions[i]] / dx[self.positions[i]];
+        let t_bar = self.x_bar[self.positions[i]] / dx[self.positions[i]];
         let s = self.z[self.positions[j]] / dz[self.positions[j]];
-        assert!(!t.is_nan() && !t.is_infinite());
-        assert!(!s.is_nan() && !s.is_infinite());
-        (t, s)
-    }
+        let s_bar = self.z_bar[self.positions[j]] / dz[self.positions[j]];
 
-    fn pivot(&mut self, i: usize, j: usize, t: f64, s: f64, dx: &[f64], dz: &[f64]) {
+        assert!(!t.is_infinite() && !t.is_nan());
+        assert!(!t_bar.is_infinite() && !t_bar.is_nan());
+        assert!(!s.is_infinite() && !s.is_nan());
+        assert!(!s_bar.is_infinite() && !s_bar.is_nan());
+
         self.x.iter_mut().zip(&self.b).for_each(|(x, k)| {
-            if *k == i {
+            if *k == j {
                 *x = t;
             } else {
                 *x -= t * dx[self.positions[*k]];
             }
         });
-        self.z.iter_mut().zip(&self.n).for_each(|(z, k)| {
+
+        self.x_bar.iter_mut().zip(&self.b).for_each(|(x, k)| {
             if *k == j {
+                *x = t_bar;
+            } else {
+                *x -= t_bar * dx[self.positions[*k]];
+            }
+        });
+
+        self.z.iter_mut().zip(&self.n).for_each(|(z, k)| {
+            if *k == i {
                 *z = s;
             } else {
                 *z -= s * dz[self.positions[*k]];
             }
         });
+
+        self.z_bar.iter_mut().zip(&self.n).for_each(|(z, k)| {
+            if *k == i {
+                *z = s_bar;
+            } else {
+                *z -= s_bar * dz[self.positions[*k]];
+            }
+        });
         self.swap(i, j);
     }
 
-    fn run_primal_simplex(mut self) -> Result<Self, Error> {
-        while let Some(j) = try_pick_enter(&self.n, &self.z) {
-            let basis_matrix = self.constraints.collect_columns(&self.b);
-
-            let dx = self.solve_for_dx(j, &basis_matrix);
-            let i = pick_exit(&self.b, &dx, &self.x);
-            let dz = self.solve_for_dz(i, &basis_matrix);
-
-            let (t, s) = self.step_lengths(i, j, &dx, &dz);
-            if t < 0.0 {
-                return Err(Error::Unbounded);
-            }
-            self.pivot(i, j, t, s, &dx, &dz);
-        }
-        Ok(self)
+    fn basis_matrix(&self) -> CscMatrix {
+        self.constraints.collect_columns(&self.b)
     }
 
-    fn run_dual_simplex(mut self) -> Result<Self, Error> {
-        while let Some(i) = try_pick_enter(&self.b, &self.x) {
-            let basis_matrix = self.constraints.collect_columns(&self.b);
+    fn solve_for_mu(&self) -> Option<Mu> {
+        assert_eq!(self.x.len(), self.x_bar.len());
+        assert_eq!(self.z.len(), self.z_bar.len());
 
-            let dz = self.solve_for_dz(i, &basis_matrix);
-            let j = pick_exit(&self.n, &dz, &self.z);
-            let dx = self.solve_for_dx(j, &basis_matrix);
-
-            let (t, s) = self.step_lengths(i, j, &dx, &dz);
-            if s < 0.0 {
-                return Err(Error::Infeasible);
-            }
-            self.pivot(i, j, t, s, &dx, &dz);
-        }
-        Ok(self)
-    }
-
-    fn run_two_phase_simplex(mut self) -> Result<Self, Error> {
-        let orig_z = self.z.to_vec();
-        self.z = self
-            .ids
+        let (i, primal) = self
+            .b
             .iter()
-            .filter(|id| !self.slack_set.contains(id))
-            .map(|_| 1.0)
-            .collect();
+            .zip(&self.x)
+            .zip(&self.x_bar)
+            .filter(|((_, _), x_bar_i)| **x_bar_i > 0.0)
+            .map(|((i, x_i), x_bar_i)| (i, -*x_i / *x_bar_i))
+            .reduce(|(max_i, max_ratio), (i, ratio)| match ratio > max_ratio {
+                true => (i, ratio),
+                false => (max_i, max_ratio),
+            })
+            .unwrap();
+            // .unwrap_or((&0, f64::NEG_INFINITY));
 
-        let mut phase_one = self
-            .optimize()
-            .expect("Phase I problem should always be dual feasible");
+        let (j, dual) = self
+            .n
+            .iter()
+            .zip(&self.z)
+            .zip(&self.z_bar)
+            .filter(|((_, _), z_bar_j)| **z_bar_j > 0.0)
+            .map(|((j, z_j), z_bar_j)| (j, -*z_j / *z_bar_j))
+            .reduce(|(max_j, max_ratio), (j, ratio)| match ratio > max_ratio {
+                true => (j, ratio),
+                false => (max_j, max_ratio),
+            })
+            // .unwrap()
+            .unwrap_or((&0, f64::NEG_INFINITY));
 
-        phase_one.z = orig_z;
-        phase_one.optimize()
-    }
-
-    fn optimize(self) -> Result<Self, Error> {
-        match (self.is_primal_feasible(), self.is_dual_feasible()) {
-            (true, true) => Ok(self),
-            (true, false) => self.run_primal_simplex(),
-            (false, true) => self.run_dual_simplex(),
-            (false, false) => self.run_two_phase_simplex(),
+        if primal <= 0.0 && dual <= 0.0 {
+            return None;
         }
+
+        let mu = match dual > primal {
+            true => Mu {
+                star: 1.0 / dual,
+                step: Step::Primal(*j),
+            },
+            false => Mu {
+                star: 1.0 / primal,
+                step: Step::Dual(*i),
+            },
+        };
+        Some(mu)
     }
 
-    fn is_primal_feasible(&self) -> bool {
-        self.x.iter().all(|k| *k >= 0.0)
+    fn primal_step(&mut self, j: usize, mu_star: f64, basis_matrix: &CscMatrix) {
+        let dx = self.solve_for_dx(j, basis_matrix);
+        let i = self
+            .x
+            .iter()
+            .zip(&self.x_bar)
+            .map(|(x_i, x_bar_i)| x_i + mu_star * x_bar_i)
+            .zip(&dx)
+            .map(|(denominator, dx_i)| *dx_i / denominator)
+            .enumerate()
+            .reduce(|(max_i, max_ratio), (i, ratio)| match ratio > max_ratio {
+                true => (i, ratio),
+                false => (max_i, max_ratio),
+            })
+            .map(|(i, _)| self.b[i])
+            .unwrap();
+        dbg!(mu_star, &dx, &self.x, &self.x_bar, &self.b);
+        dbg!(i, j);
+        let dz = self.solve_for_dz(i, basis_matrix);
+
+        self.pivot(i, j, &dx, &dz);
     }
 
-    fn is_dual_feasible(&self) -> bool {
-        self.z.iter().all(|k| *k >= 0.0)
+    fn dual_step(&mut self, i: usize, mu_star: f64, basis_matrix: &CscMatrix) {
+        todo!();
+        let dz = self.solve_for_dz(i, basis_matrix);
+        let j = self
+            .z
+            .iter()
+            .zip(&self.z_bar)
+            .map(|(z_j, z_bar_j)| z_j + mu_star * *z_bar_j)
+            .zip(&dz)
+            .map(|(denominator, dz_j)| *dz_j / denominator)
+            .enumerate()
+            .reduce(|(max_j, max_ratio), (j, ratio)| match ratio > max_ratio {
+                true => (j, ratio),
+                false => (max_j, max_ratio),
+            })
+            .map(|(j, _)| self.n[j])
+            .unwrap();
+        let dx = self.solve_for_dx(j, basis_matrix);
+
+        self.pivot(i, j, &dx, &dz);
+    }
+
+    fn optimize(mut self) -> Result<Self, Error> {
+        while let Some(mu) = self.solve_for_mu() {
+            let basis_matrix = self.basis_matrix();
+            match mu.step {
+                Step::Primal(j) => self.primal_step(j, mu.star, &basis_matrix),
+                Step::Dual(i) => self.dual_step(i, mu.star, &basis_matrix),
+            }
+        }
+        Ok(self)
     }
 
     fn objective_value(&self) -> f64 {
@@ -347,41 +415,16 @@ impl Simplex {
     }
 }
 
-fn try_pick_enter(set: &[usize], coefs: &[f64]) -> Option<usize> {
-    debug_assert!(!set.is_empty());
-    debug_assert_eq!(set.len(), coefs.len());
-    coefs
-        .iter()
-        .enumerate()
-        .find(|(_, e)| **e < 0.0)
-        .map(|(j, _)| set[j])
+#[derive(Debug)]
+struct Mu {
+    star: f64,
+    step: Step,
 }
 
-fn pick_exit(set: &[usize], n: &[f64], d: &[f64]) -> usize {
-    debug_assert!(!set.is_empty());
-    debug_assert_eq!(set.len(), n.len());
-    debug_assert_eq!(set.len(), d.len());
-
-    let mut max_ratio_i = 0;
-    let mut max_ratio = n[0] / d[0];
-
-    n.iter()
-        .zip(d)
-        .enumerate()
-        .skip(1)
-        .for_each(|(i, (n_i, d_i))| {
-            let ratio = if *n_i == 0.0 && *d_i == 0.0 {
-                0.0
-            } else {
-                *n_i / *d_i
-            };
-            assert!(!ratio.is_infinite() && !ratio.is_nan());
-            if ratio > max_ratio {
-                max_ratio = ratio;
-                max_ratio_i = i;
-            }
-        });
-    set[max_ratio_i]
+#[derive(Debug)]
+enum Step {
+    Primal(usize),
+    Dual(usize),
 }
 
 #[cfg(test)]
