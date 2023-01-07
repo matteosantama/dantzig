@@ -279,36 +279,12 @@ impl Simplex {
         assert_eq!(self.x.len(), self.x_bar.len());
         assert_eq!(self.z.len(), self.z_bar.len());
 
-        let (i, primal) = self
-            .b
-            .iter()
-            .zip(&self.x)
-            .zip(&self.x_bar)
-            .filter(|((_, _), x_bar_i)| **x_bar_i > 0.0)
-            .map(|((&i, &x_i), &x_bar_i)| (i, -x_i / x_bar_i))
-            .reduce(|(max_i, max_ratio), (i, ratio)| match ratio > max_ratio {
-                true => (i, ratio),
-                false => (max_i, max_ratio),
-            })
-            .unwrap_or((0, f64::NEG_INFINITY));
-
-        let (j, dual) = self
-            .n
-            .iter()
-            .zip(&self.z)
-            .zip(&self.z_bar)
-            .filter(|((_, _), z_bar_j)| **z_bar_j > 0.0)
-            .map(|((&j, &z_j), &z_bar_j)| (j, -z_j / z_bar_j))
-            .reduce(|(max_j, max_ratio), (j, ratio)| match ratio > max_ratio {
-                true => (j, ratio),
-                false => (max_j, max_ratio),
-            })
-            .unwrap_or((0, f64::NEG_INFINITY));
+        let (i, primal) = try_pick_enter_index(&self.b, &self.x, &self.x_bar);
+        let (j, dual) = try_pick_enter_index(&self.n, &self.z, &self.z_bar);
 
         if primal <= 0.0 && dual <= 0.0 {
             return None;
         }
-
         let mu = match dual > primal {
             true => Mu {
                 star: 1.0 / dual,
@@ -423,6 +399,19 @@ fn pivot(values: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
         });
 }
 
+fn try_pick_enter_index(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> (usize, f64) {
+    bn.iter()
+        .zip(xz)
+        .zip(xz_bar)
+        .filter(|((_, _), xz_bar_k)| **xz_bar_k > 0.0)
+        .map(|((&k, &xz_k), &xz_bar_k)| (k, -xz_k / xz_bar_k))
+        .reduce(|(max_k, max_ratio), (k, ratio)| match ratio > max_ratio {
+            true => (k, ratio),
+            false => (max_k, max_ratio),
+        })
+        .unwrap_or((0, f64::NEG_INFINITY))
+}
+
 fn pick_exit_index(mu_star: f64, xz: &[f64], xz_bar: &[f64], dxz: &[f64], bn: &[usize]) -> usize {
     xz.iter()
         .zip(xz_bar)
@@ -517,6 +506,25 @@ mod tests {
     }
 
     #[test]
+    fn test_primal_simplex_4() {
+        let x_1 = Variable::new();
+        let x_2 = Variable::new();
+        let x_3 = Variable::new();
+
+        let objective = AffExpr::new(&[(10.0, &x_1), (12.0, &x_2), (12.0, &x_3)], 0.0);
+        let c_1 = Inequality::new(&[(1.0, &x_1), (2.0, &x_2), (2.0, &x_3)], 20.0);
+        let c_2 = Inequality::new(&[(2.0, &x_1), (1.0, &x_2), (2.0, &x_3)], 20.0);
+        let c_3 = Inequality::new(&[(2.0, &x_1), (2.0, &x_2), (1.0, &x_3)], 20.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), 136.0);
+        assert_eq!(result.solution(&x_1), 4.0);
+        assert_eq!(result.solution(&x_2), 4.0);
+        assert_eq!(result.solution(&x_3), 4.0);
+    }
+
+    #[test]
     fn test_dual_simplex() {
         let x = Variable::new();
         let y = Variable::new();
@@ -531,6 +539,25 @@ mod tests {
         assert_eq!(result.objective_value(), -7.0);
         assert_eq!(result.solution(&x), 7.0);
         assert_eq!(result.solution(&y), 0.0);
+    }
+
+    #[test]
+    fn test_dual_simplex_2() {
+        let x_1 = Variable::new();
+        let x_2 = Variable::new();
+        let x_3 = Variable::new();
+
+        let objective = AffExpr::new(&[(-10.0, &x_1), (-12.0, &x_2), (-12.0, &x_3)], 0.0);
+        let c_1 = Inequality::new(&[(-1.0, &x_1), (-2.0, &x_2), (-2.0, &x_3)], -20.0);
+        let c_2 = Inequality::new(&[(-2.0, &x_1), (-1.0, &x_2), (-2.0, &x_3)], -20.0);
+        let c_3 = Inequality::new(&[(-2.0, &x_1), (-2.0, &x_2), (-1.0, &x_3)], -20.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), -136.0);
+        assert_eq!(result.solution(&x_1), 4.0);
+        assert_eq!(result.solution(&x_2), 4.0);
+        assert_eq!(result.solution(&x_3), 4.0);
     }
 
     #[test]
