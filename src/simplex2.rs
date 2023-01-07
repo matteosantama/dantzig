@@ -110,7 +110,7 @@ struct Simplex {
     positions: Vec<usize>,
 
     // Associate the IDs of all basic variables with their corresponding index in `b`
-    basic_pos_by_id: HashMap<usize, usize>,
+    b_position_by_id: HashMap<usize, usize>,
 
     // If `ids[i] = k`, then variable `i` (identified by position) has ID `k`.
     ids: Vec<usize>,
@@ -212,7 +212,7 @@ impl Simplex {
             b: (n - m..n).collect(),
             n: (0..n - m).collect(),
             positions: (0..n - m).chain(0..m).collect(),
-            basic_pos_by_id,
+            b_position_by_id: basic_pos_by_id,
             ids,
             x,
             z,
@@ -235,11 +235,10 @@ impl Simplex {
 
     /// Index `j` enters the basis and `i` exits.
     fn swap(&mut self, i: usize, j: usize) {
-        self.basic_pos_by_id.remove(&self.ids[i]).unwrap();
-        assert!(self
-            .basic_pos_by_id
-            .insert(self.ids[j], self.positions[i])
-            .is_none());
+        let b_position = self.b_position_by_id.remove(&self.ids[i]).unwrap();
+        assert_eq!(b_position, self.b[self.positions[i]]);
+        assert!(!self.b_position_by_id.contains_key(&self.ids[j]));
+        self.b_position_by_id.insert(self.ids[j], self.positions[i]);
 
         self.b[self.positions[i]] = j;
         self.n[self.positions[j]] = i;
@@ -248,11 +247,8 @@ impl Simplex {
     }
 
     fn pivot(&mut self, i: usize, j: usize, t: f64, s: f64, dx: &[f64], dz: &[f64]) {
-        let t_bar = self.x_bar[self.positions[i]] / dx[self.positions[i]];
-        let s_bar = self.z_bar[self.positions[j]] / dz[self.positions[j]];
-
-        assert!(!t_bar.is_infinite() && !t_bar.is_nan());
-        assert!(!s_bar.is_infinite() && !s_bar.is_nan());
+        let t_bar = safe_divide(self.x_bar[self.positions[i]], dx[self.positions[i]]);
+        let s_bar = safe_divide(self.z_bar[self.positions[j]], dz[self.positions[j]]);
 
         pivot(&mut self.x, dx, self.positions[i], t);
         pivot(&mut self.x_bar, dx, self.positions[i], t_bar);
@@ -260,7 +256,7 @@ impl Simplex {
         pivot(&mut self.z_bar, dz, self.positions[j], s_bar);
 
         // self.z_bar.iter_mut().zip(&self.n).for_each(|(z, k)| {
-        // i "works" here, but I'm pretty sure it should be j
+        // // i "works" here, but I'm pretty sure it should be j
         //     if *k == i {
         //         *z = s_bar;
         //     } else {
@@ -281,6 +277,10 @@ impl Simplex {
 
         let (i, primal) = try_pick_enter_index(&self.b, &self.x, &self.x_bar);
         let (j, dual) = try_pick_enter_index(&self.n, &self.z, &self.z_bar);
+
+        dbg!(&self.b, &self.x, &self.x_bar);
+        dbg!(&self.n, &self.z, &self.z_bar);
+        dbg!(i, primal, j, dual);
 
         if primal <= 0.0 && dual <= 0.0 {
             return None;
@@ -308,11 +308,8 @@ impl Simplex {
         let i = pick_exit_index(mu_star, &self.x, &self.x_bar, &dx, &self.b);
         let dz = self.solve_for_dz(i, basis_matrix);
 
-        let t = self.x[self.positions[i]] / dx[self.positions[i]];
-        let s = self.z[self.positions[j]] / dz[self.positions[j]];
-
-        assert!(!t.is_infinite() && !t.is_nan());
-        assert!(!s.is_infinite() && !s.is_nan());
+        let t = safe_divide(self.x[self.positions[i]], dx[self.positions[i]]);
+        let s = safe_divide(self.z[self.positions[j]], dz[self.positions[j]]);
 
         if t < 0.0 {
             return Err(Error::Unbounded);
@@ -327,15 +324,13 @@ impl Simplex {
         mu_star: f64,
         basis_matrix: &CscMatrix,
     ) -> Result<Self, Error> {
+        // todo!();
         let dz = self.solve_for_dz(i, basis_matrix);
         let j = pick_exit_index(mu_star, &self.z, &self.z_bar, &dz, &self.n);
         let dx = self.solve_for_dx(j, basis_matrix);
 
-        let s = self.z[self.positions[j]] / dz[self.positions[j]];
-        let t = self.x[self.positions[i]] / dx[self.positions[i]];
-
-        assert!(!s.is_infinite() && !s.is_nan());
-        assert!(!t.is_infinite() && !t.is_nan());
+        let s = safe_divide(self.z[self.positions[j]], dz[self.positions[j]]);
+        let t = safe_divide(self.x[self.positions[i]], dx[self.positions[i]]);
 
         if s < 0.0 {
             return Err(Error::Infeasible);
@@ -366,7 +361,7 @@ impl Simplex {
     }
 
     fn solution(&self, var: &Variable) -> f64 {
-        match self.basic_pos_by_id.get(&var.id) {
+        match self.b_position_by_id.get(&var.id) {
             None => 0.0,
             Some(index) => self.x[*index],
         }
@@ -427,12 +422,19 @@ fn pick_exit_index(mu_star: f64, xz: &[f64], xz_bar: &[f64], dxz: &[f64], bn: &[
         .unwrap()
 }
 
+/// Compute `x / y`, with `0 / 0 = 0`.
+fn safe_divide(x: f64, y: f64) -> f64 {
+    let result = if x == 0.0 && y == 0.0 { 0.0 } else { x / y };
+    assert!(!result.is_infinite() && !result.is_nan(), "{} / {}", x, y);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use crate::simplex2::*;
 
     #[test]
-    fn test_primal_simplex_1() {
+    fn test_1() {
         let x = Variable::new();
         let y = Variable::new();
 
@@ -449,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn test_primal_simplex_2() {
+    fn test_2() {
         let x_1 = Variable::new();
         let x_2 = Variable::new();
         let x_3 = Variable::new();
@@ -468,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn test_primal_simplex_3() {
+    fn test_3() {
         // LP relaxation of the problem on page C-10
         // http://web.tecnico.ulisboa.pt/mcasquilho/compute/_linpro/TaylorB_module_c.pdf
         let x_1 = Variable::new();
@@ -506,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn test_primal_simplex_4() {
+    fn test_4() {
         let x_1 = Variable::new();
         let x_2 = Variable::new();
         let x_3 = Variable::new();
@@ -525,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dual_simplex() {
+    fn test_5() {
         let x = Variable::new();
         let y = Variable::new();
 
@@ -542,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dual_simplex_2() {
+    fn test_6() {
         let x_1 = Variable::new();
         let x_2 = Variable::new();
         let x_3 = Variable::new();
@@ -561,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn test_two_phase_simplex_1() {
+    fn test_7() {
         let x = Variable::new();
         let y = Variable::new();
 
@@ -581,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn test_two_phase_simplex_2() {
+    fn test_8() {
         let x = Variable::new();
         let y = Variable::new();
 
@@ -595,5 +597,91 @@ mod tests {
         assert_eq!(result.objective_value(), -1.0);
         assert_eq!(result.solution(&x), 2.0);
         assert_eq!(result.solution(&y), 1.0);
+    }
+
+    #[test]
+    fn test_9() {
+        let x_1 = Variable::new();
+        let x_2 = Variable::new();
+        let x_3 = Variable::new();
+        let x_4 = Variable::new();
+        let x_5 = Variable::new();
+        let x_6 = Variable::new();
+        let x_7 = Variable::new();
+        let x_8 = Variable::new();
+
+        let objective = AffExpr::new(
+            &[
+                (-3.0, &x_1),
+                (-1.0, &x_2),
+                (1.0, &x_3),
+                (2.0, &x_4),
+                (-1.0, &x_5),
+                (1.0, &x_6),
+                (-1.0, &x_7),
+                (-4.0, &x_8),
+            ],
+            0.0,
+        );
+        let c_1 = Inequality::new(
+            &[
+                (1.0, &x_1),
+                (4.0, &x_3),
+                (1.0, &x_4),
+                (-5.0, &x_5),
+                (-2.0, &x_6),
+                (3.0, &x_7),
+                (-6.0, &x_8),
+            ],
+            7.0,
+        );
+        let c_2 = Inequality::new(
+            &[
+                (-1.0, &x_1),
+                (-4.0, &x_3),
+                (-1.0, &x_4),
+                (5.0, &x_5),
+                (2.0, &x_6),
+                (-3.0, &x_7),
+                (6.0, &x_8),
+            ],
+            -7.0,
+        );
+        let c_3 = Inequality::new(
+            &[
+                (1.0, &x_2),
+                (-3.0, &x_3),
+                (-1.0, &x_4),
+                (4.0, &x_5),
+                (1.0, &x_6),
+                (-2.0, &x_7),
+                (5.0, &x_8),
+            ],
+            -3.0,
+        );
+        let c_4 = Inequality::new(
+            &[
+                (-1.0, &x_2),
+                (3.0, &x_3),
+                (1.0, &x_4),
+                (-4.0, &x_5),
+                (-1.0, &x_6),
+                (2.0, &x_7),
+                (-5.0, &x_8),
+            ],
+            3.0,
+        );
+        let constraints = vec![c_1, c_2, c_3, c_4];
+
+        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        assert_eq!(result.objective_value(), 24.0);
+        assert_eq!(result.solution(&x_1), 0.0);
+        assert_eq!(result.solution(&x_2), 6.0);
+        assert_eq!(result.solution(&x_3), 1.0);
+        assert_eq!(result.solution(&x_4), 15.0);
+        assert_eq!(result.solution(&x_5), 2.0);
+        assert_eq!(result.solution(&x_6), 1.0);
+        assert_eq!(result.solution(&x_7), 0.0);
+        assert_eq!(result.solution(&x_8), 0.0);
     }
 }
