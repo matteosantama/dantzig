@@ -610,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn test_7() {
+    fn test_unbounded() {
         let x = Variable::new();
         let y = Variable::new();
 
@@ -623,6 +623,21 @@ mod tests {
         match Simplex::new(objective, constraints).optimize().unwrap_err() {
             Error::Unbounded => (),
             Error::Infeasible => panic!("problem should be unbounded"),
+        }
+    }
+
+    #[test]
+    fn test_infeasible() {
+        let x = Variable::new();
+        let y = Variable::new();
+
+        let objective = AffExpr::new(&[(1.0, &x), (1.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(1.0, &x)], -1.0);
+        let constraints = vec![c_1];
+
+        match Simplex::new(objective, constraints).optimize().unwrap_err() {
+            Error::Unbounded => panic!("problem should be infeasible"),
+            Error::Infeasible => (),
         }
     }
 
