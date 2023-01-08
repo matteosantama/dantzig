@@ -87,12 +87,44 @@ enum Error {
     Infeasible,
 }
 
-fn align(linexpr: &LinExpr, indices: &HashMap<usize, usize>) -> Vec<f64> {
-    let mut aligned = vec![0.0; indices.len()];
-    for (i, var) in linexpr.vars.iter().enumerate() {
-        aligned[indices[&var.id]] = linexpr.coefs[i];
+fn iter_all_ids<'a>(
+    objective: &'a AffExpr,
+    equalities: &'a [Equality],
+) -> impl Iterator<Item = usize> + 'a {
+    objective.linexpr.vars.iter().map(|var| var.id).chain(
+        equalities
+            .iter()
+            .flat_map(|equality| equality.linexpr.vars.iter().map(|var| var.id)),
+    )
+}
+
+fn align(objective: AffExpr, id_to_index: &HashMap<usize, usize>) -> Vec<f64> {
+    let mut result = vec![0.0; id_to_index.len()];
+    for (i, var) in objective.linexpr.vars.iter().enumerate() {
+        result[id_to_index[&var.id]] = objective.linexpr.coefs[i];
     }
-    aligned
+    result
+}
+
+fn sparsify(constraints: Vec<Equality>, id_to_index: &HashMap<usize, usize>) -> CscMatrix {
+    let m = constraints.len();
+    let n = id_to_index.len();
+
+    let coords = constraints
+        .into_iter()
+        .map(|c| c.linexpr)
+        .enumerate()
+        .flat_map(|(i, linexpr)| {
+            linexpr
+                .vars
+                .into_iter()
+                .map(|var| id_to_index[&var.id])
+                .zip(linexpr.coefs)
+                .map(move |(j, coef)| (i, j, coef))
+        })
+        .collect::<Vec<(usize, usize, f64)>>();
+
+    Matrix::coords(m, n, &coords).to_sparse()
 }
 
 /// https://dl.icdst.org/pdfs/files3/faa54c1f53965a11b03f9a13b023f9b2.pdf
@@ -104,16 +136,15 @@ struct Simplex {
     // Indices of the basic and non-basic variables, respectively.
     b: Vec<usize>,
     n: Vec<usize>,
-    // If `positions[i] = k`, then variable `i` (identified by position, not ID) is in
-    // index `k` in _either_ `b` or `n`. The caller is responsible for knowing whether
-    // variable `i` is basic or non-basic.
-    positions: Vec<usize>,
 
-    // Associate the IDs of all basic variables with their corresponding index in `b`
-    b_position_by_id: HashMap<usize, usize>,
+    // Map a variable index to the index within `b` or `n`.
+    b_key: HashMap<usize, usize>,
+    n_key: HashMap<usize, usize>,
 
-    // If `ids[i] = k`, then variable `i` (identified by position) has ID `k`.
-    ids: Vec<usize>,
+    // If `index_to_id[i] == k`, then variable `i` (identified by position) has ID `k`.
+    // It should also always be the case that `id_to_index[index_to_id[k]] == k`.
+    index_to_id: Vec<usize>,
+    id_to_index: HashMap<usize, usize>,
 
     // These are the "solution vectors" corresponding to the primal and dual problems.
     x: Vec<f64>,
@@ -134,86 +165,77 @@ impl Debug for Simplex {
 }
 
 impl Simplex {
-    fn prepare(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
-        // TODO: Refactor this function to make it simpler.
-        // STEP 1: Insert slack variables into each constraint, and convert the inequalities
-        // to equalities.
-        let mut slack_ids = HashSet::new();
-        let equality_constraints = constraints
+    fn presolve(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
+        let m = constraints.len();
+
+        // STEP 1: Add slack variables to all constraints to transform inequalities to
+        // equalities. We store the ID of the slack variable, along with the index of
+        // its associated constraint.
+        let mut slack_ids = HashMap::with_capacity(m);
+        let equalities = constraints
             .into_iter()
             .map(|inequality| {
                 let equality = inequality.slacken();
-                slack_ids.insert(equality.slack_id);
+                slack_ids.insert(equality.slack_id, equality.b);
                 equality
             })
             .collect::<Vec<_>>();
 
-        // STEP 2: Iterate through all variables in the problem, and assign a column index
-        // to each.
-        let mut ids = Vec::new();
-        let mut indices = HashMap::new();
-        let mut basic_pos_by_id = HashMap::new();
-        objective
-            .linexpr
-            .vars
-            .iter()
-            .map(|var| var.id)
-            .chain(
-                equality_constraints
-                    .iter()
-                    .flat_map(|c| c.linexpr.vars.iter().map(|var| var.id)),
-            )
-            .for_each(|id| {
-                if let Entry::Vacant(e) = indices.entry(id) {
-                    e.insert(ids.len());
-                    if slack_ids.contains(&id) {
-                        basic_pos_by_id.insert(id, basic_pos_by_id.len());
-                    }
-                    ids.push(id);
-                }
-            });
+        // STEP 2: Iterate through all IDs of the problem, and reduce them to a single unique
+        // list. To each ID, we also assign an index.
+        let mut index_to_id = Vec::new();
+        let mut id_to_index = HashMap::new();
 
-        // STEP 3: Align the objective to these new indices
+        for id in iter_all_ids(&objective, &equalities) {
+            if let Entry::Vacant(e) = id_to_index.entry(id) {
+                e.insert(index_to_id.len());
+                index_to_id.push(id);
+            }
+        }
+
+        // STEP 3: Align the objective to the indices.
         let obj_const = objective.constant;
-        let obj_coefs = align(&objective.linexpr, &indices);
+        let obj_coefs = align(objective, &id_to_index);
 
-        // STEP 4: Prepare remaining initialization parameters
-        let x = equality_constraints.iter().map(|c| c.b).collect::<Vec<_>>();
-        let z = ids
-            .iter()
-            .filter(|id| !slack_ids.contains(id))
-            .map(|id| -obj_coefs[indices[id]])
-            .collect::<Vec<_>>();
+        // STEP 4: Iterate through the unique variables, and construct our basic feasible
+        // solution.
+        let mut b_key = HashMap::with_capacity(m);
+        let mut b = Vec::with_capacity(m);
+        let mut x = Vec::with_capacity(m);
 
-        // STEP 5: Align the constraints and store as CSC matrix.
-        let m = equality_constraints.len();
-        let n = obj_coefs.len();
-        let coords = equality_constraints
-            .into_iter()
-            .map(|c| c.linexpr)
-            .enumerate()
-            .flat_map(|(i, linexpr)| {
-                linexpr
-                    .vars
-                    .into_iter()
-                    .map(|var| indices[&var.id])
-                    .zip(linexpr.coefs)
-                    .map(move |(j, coef)| (i, j, coef))
-            })
-            .collect::<Vec<(usize, usize, f64)>>();
+        let mut n_key = HashMap::with_capacity(index_to_id.len() - m);
+        let mut n = Vec::with_capacity(index_to_id.len() - m);
+        let mut z = Vec::with_capacity(index_to_id.len() - m);
 
+        for id in &index_to_id {
+            let index = id_to_index[id];
+            if let Entry::Occupied(entry) = slack_ids.entry(*id) {
+                b_key.insert(index, b.len());
+                b.push(index);
+                x.push(*entry.get())
+            } else {
+                n_key.insert(index, n.len());
+                n.push(index);
+                z.push(-obj_coefs[index]);
+            }
+        }
+
+        // STEP 5: Prepare the remaining initialization parameters.
         let x_bar = vec![1.0; x.len()];
         let z_bar = vec![1.0; z.len()];
+
+        let constraints = sparsify(equalities, &id_to_index);
 
         Self {
             obj_coefs,
             obj_const,
-            constraints: Matrix::coords(m, n, &coords).to_sparse(),
-            b: (n - m..n).collect(),
-            n: (0..n - m).collect(),
-            positions: (0..n - m).chain(0..m).collect(),
-            b_position_by_id: basic_pos_by_id,
-            ids,
+            constraints,
+            b,
+            n,
+            b_key,
+            n_key,
+            index_to_id,
+            id_to_index,
             x,
             z,
             x_bar,
@@ -228,36 +250,41 @@ impl Simplex {
 
     fn solve_for_dz(&self, i: usize, basis_matrix: &CscMatrix) -> Vec<f64> {
         let mut e = vec![0.0; basis_matrix.nrows()];
-        e[self.positions[i]] = 1.0;
+        e[self.b_key[&i]] = 1.0;
         let v = lu_solve(basis_matrix.clone().to_dense().t(), e);
         self.constraints.collect_columns(&self.n).neg_t_dot(v)
     }
 
     /// Index `j` enters the basis and `i` exits.
     fn swap(mut self, i: usize, j: usize) -> Result<Self, Error> {
-        let b_position = self.b_position_by_id.remove(&self.ids[i]).unwrap();
-        assert_eq!(b_position, self.positions[i]);
-        assert!(!self.b_position_by_id.contains_key(&self.ids[j]));
-        self.b_position_by_id.insert(self.ids[j], self.positions[i]);
+        assert!(self.b_key.contains_key(&i) && !self.b_key.contains_key(&j));
+        assert!(self.n_key.contains_key(&j) && !self.n_key.contains_key(&i));
 
-        self.b[self.positions[i]] = j;
-        self.n[self.positions[j]] = i;
+        self.b[self.b_key[&i]] = j;
+        self.n[self.n_key[&j]] = i;
 
-        self.positions.swap(i, j);
+        self.b_key.insert(j, self.b_key[&i]);
+        self.n_key.insert(i, self.n_key[&j]);
+
+        assert!(self.b_key.remove(&i).is_some());
+        assert!(self.n_key.remove(&j).is_some());
 
         Ok(self)
     }
 
     fn pivot(mut self, i: usize, j: usize, dx: &[f64], dz: &[f64]) -> Result<Self, Error> {
-        let t = safe_divide(self.x[self.positions[i]], dx[self.positions[i]]);
-        let s = safe_divide(self.z[self.positions[j]], dz[self.positions[j]]);
-        let t_bar = safe_divide(self.x_bar[self.positions[i]], dx[self.positions[i]]);
-        let s_bar = safe_divide(self.z_bar[self.positions[j]], dz[self.positions[j]]);
+        let b_i = self.b_key[&i];
+        let n_j = self.n_key[&j];
 
-        pivot(&mut self.x, dx, self.positions[i], t);
-        pivot(&mut self.x_bar, dx, self.positions[i], t_bar);
-        pivot(&mut self.z, dz, self.positions[j], s);
-        pivot(&mut self.z_bar, dz, self.positions[j], s_bar);
+        let t = safe_divide(self.x[b_i], dx[b_i]);
+        let s = safe_divide(self.z[n_j], dz[n_j]);
+        let t_bar = safe_divide(self.x_bar[b_i], dx[b_i]);
+        let s_bar = safe_divide(self.z_bar[n_j], dz[n_j]);
+
+        pivot(&mut self.x, dx, b_i, t);
+        pivot(&mut self.x_bar, dx, b_i, t_bar);
+        pivot(&mut self.z, dz, n_j, s);
+        pivot(&mut self.z_bar, dz, n_j, s_bar);
 
         self.swap(i, j)
     }
@@ -315,14 +342,14 @@ impl Simplex {
         self.pivot(i, j, &dx, &dz)
     }
 
-    fn optimize(self) -> Result<Self, Error> {
+    fn solve(self) -> Result<Self, Error> {
         if let Some(mu) = self.solve_for_mu() {
             let basis_matrix = self.basis_matrix();
             let result = match mu.step {
                 Step::Primal(j) => self.primal_step(j, mu.star, &basis_matrix)?,
                 Step::Dual(i) => self.dual_step(i, mu.star, &basis_matrix)?,
             };
-            return result.optimize();
+            return result.solve();
         }
         Ok(self)
     }
@@ -330,17 +357,17 @@ impl Simplex {
     fn objective_value(&self) -> f64 {
         self.obj_const
             + self
-                .b
+                .b_key
                 .iter()
-                .map(|&i| self.obj_coefs[i] * self.x[self.positions[i]])
+                .map(|(x, y)| self.obj_coefs[*x] * self.x[*y])
                 .sum::<f64>()
     }
 
     fn solution(&self, var: &Variable) -> f64 {
-        match self.b_position_by_id.get(&var.id) {
-            None => 0.0,
-            Some(index) => self.x[*index],
-        }
+        self.b_key
+            .get(&self.id_to_index[&var.id])
+            .map(|t| self.x[*t])
+            .unwrap_or(0.0)
     }
 }
 
@@ -357,8 +384,7 @@ enum Step {
 }
 
 fn pivot(data: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
-    data
-        .iter_mut()
+    data.iter_mut()
         .zip(delta.iter())
         .enumerate()
         .for_each(|(i, (v_i, delta_i))| {
@@ -425,7 +451,7 @@ mod tests {
         let c_3 = Inequality::new(&[(1.0, &y)], 5.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), 31.0);
         assert_eq!(result.solution(&x), 4.0);
         assert_eq!(result.solution(&y), 5.0);
@@ -443,7 +469,7 @@ mod tests {
         let c_3 = Inequality::new(&[(3.0, &x_1), (4.0, &x_2), (2.0, &x_3)], 8.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), 13.0);
         assert_eq!(result.solution(&x_1), 2.0);
         assert_eq!(result.solution(&x_2), 0.0);
@@ -480,7 +506,7 @@ mod tests {
         let c_7 = Inequality::new(&[(1.0, &x_4)], 1.0);
         let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), 750.0);
         assert_eq!(result.solution(&x_1), 1.0);
         assert_eq!(result.solution(&x_2), 0.0);
@@ -500,7 +526,7 @@ mod tests {
         let c_3 = Inequality::new(&[(2.0, &x_1), (2.0, &x_2), (1.0, &x_3)], 20.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), 136.0);
         assert_eq!(result.solution(&x_1), 4.0);
         assert_eq!(result.solution(&x_2), 4.0);
@@ -518,7 +544,7 @@ mod tests {
         let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), -7.0);
         assert_eq!(result.solution(&x), 7.0);
         assert_eq!(result.solution(&y), 0.0);
@@ -536,7 +562,7 @@ mod tests {
         let c_3 = Inequality::new(&[(-2.0, &x_1), (-2.0, &x_2), (-1.0, &x_3)], -20.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), -136.0);
         assert_eq!(result.solution(&x_1), 4.0);
         assert_eq!(result.solution(&x_2), 4.0);
@@ -574,7 +600,7 @@ mod tests {
         let c_3 = Inequality::new(&[(1.0, &y)], 1.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), -1.0);
         assert_eq!(result.solution(&x), 2.0);
         assert_eq!(result.solution(&y), 1.0);
@@ -654,7 +680,7 @@ mod tests {
         );
         let constraints = vec![c_1, c_2, c_3, c_4];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), 24.0);
         assert_eq!(result.solution(&x_1), 0.0);
         assert_eq!(result.solution(&x_2), 6.0);
@@ -686,7 +712,7 @@ mod tests {
         let c_8 = Inequality::new(&[(-2.0, &x_2), (-1.0, &x_5), (-1.0, &x_6)], -13.0);
         let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7, c_8];
 
-        let result = Simplex::prepare(objective, constraints).optimize().unwrap();
+        let result = Simplex::presolve(objective, constraints).solve().unwrap();
         assert_eq!(result.objective_value(), 33.0);
         assert_eq!(result.solution(&x_1), 3.0);
         assert_eq!(result.solution(&x_2), 4.0);
