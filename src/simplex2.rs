@@ -1,6 +1,6 @@
 use crate::linalg2::{lu_solve, CscMatrix, Matrix};
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -294,26 +294,48 @@ impl Simplex {
     }
 
     fn status(self) -> Result<Status, Error> {
-        let (i, primal) = try_pick_enter(&self.b, &self.x, &self.x_bar);
-        let (j, dual) = try_pick_enter(&self.n, &self.z, &self.z_bar);
+        let status = match try_pick_enter(&self.b, &self.x, &self.x_bar) {
+            None => match try_pick_enter(&self.n, &self.z, &self.z_bar) {
+                Some(j) => {
+                    let dual = -self.z[self.n_key[&j]] / self.z_bar[self.n_key[&j]];
 
-        if primal <= 0.0 && dual <= 0.0 {
-            return None;
-        }
-        let mu = match dual > primal {
-            true => Mu {
-                star: dual,
-                step: Step::Primal(j),
+                    match dual <= 0.0 {
+                        true => Status::Optimal(self),
+                        false => Err(Error::Unbounded)?,
+                    }
+                }
+                None => panic!("unexpected code path encountered"),
             },
-            false => Mu {
-                star: primal,
-                step: Step::Dual(i),
+            Some(i) => match try_pick_enter(&self.n, &self.z, &self.z_bar) {
+                None => {
+                    let primal = -self.x[self.b_key[&i]] / self.x_bar[self.b_key[&i]];
+
+                    match primal <= 0.0 {
+                        true => Status::Optimal(self),
+                        false => Err(Error::Infeasible)?,
+                    }
+                }
+                Some(j) => {
+                    let primal = -self.x[self.b_key[&i]] / self.x_bar[self.b_key[&i]];
+                    let dual = -self.z[self.n_key[&j]] / self.z_bar[self.n_key[&j]];
+
+                    match primal <= 0.0 && dual <= 0.0 {
+                        true => Status::Optimal(self),
+                        false => {
+                            let step = match primal <= dual {
+                                true => Mu::primal_step(self, j, dual),
+                                false => Mu::dual_step(self, i, primal),
+                            };
+                            Status::Suboptimal(step)
+                        }
+                    }
+                }
             },
         };
-        Some(mu)
+        Ok(status)
     }
 
-    fn primal_step(mut self, j: usize, mu: f64) -> Self {
+    fn primal_step(self, j: usize, mu: f64) -> Self {
         let basis_matrix = self.basis_matrix();
 
         let dx = self.solve_for_dx(j, &basis_matrix);
@@ -323,7 +345,7 @@ impl Simplex {
         self.pivot(i, j, &dx, &dz)
     }
 
-    fn dual_step(mut self, i: usize, mu: f64) -> Self {
+    fn dual_step(self, i: usize, mu: f64) -> Self {
         let basis_matrix = self.basis_matrix();
 
         let dz = self.solve_for_dz(i, &basis_matrix);
@@ -369,6 +391,26 @@ struct Mu {
     length: f64,
 }
 
+impl Mu {
+    fn primal_step(simplex: Simplex, j: usize, length: f64) -> Step {
+        let mu = Mu {
+            simplex,
+            index: j,
+            length,
+        };
+        Step::Primal(mu)
+    }
+
+    fn dual_step(simplex: Simplex, i: usize, length: f64) -> Step {
+        let mu = Mu {
+            simplex,
+            index: i,
+            length,
+        };
+        Step::Dual(mu)
+    }
+}
+
 enum Step {
     Primal(Mu),
     Dual(Mu),
@@ -392,7 +434,7 @@ fn pivot(data: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
         });
 }
 
-fn try_pick_enter(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> (usize, f64) {
+fn try_pick_enter(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> Option<usize> {
     assert_eq!(bn.len(), xz.len());
     assert_eq!(bn.len(), xz_bar.len());
     bn.iter()
@@ -404,7 +446,7 @@ fn try_pick_enter(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> (usize, f64) {
             true => (k, ratio),
             false => (max_k, max_ratio),
         })
-        .unwrap_or((0, f64::NEG_INFINITY))
+        .map(|(k, _)| k)
 }
 
 fn pick_exit(mu: f64, xz: &[f64], xz_bar: &[f64], dxz: &[f64], bn: &[usize]) -> usize {
@@ -567,25 +609,22 @@ mod tests {
         assert_eq!(result.solution(&x_3), 4.0);
     }
 
-    // #[test]
-    // fn test_7() {
-    //     let x = Variable::new();
-    //     let y = Variable::new();
-    //
-    //     let objective = AffExpr::new(&[(-1.0, &x), (4.0, &y)], 0.0);
-    //     let c_1 = Inequality::new(&[(-2.0, &x), (-1.0, &y)], 4.0);
-    //     let c_2 = Inequality::new(&[(-2.0, &x), (4.0, &y)], -8.0);
-    //     let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
-    //     let constraints = vec![c_1, c_2, c_3];
-    //
-    //     match Simplex::prepare(objective, constraints)
-    //         .optimize()
-    //         .unwrap_err()
-    //     {
-    //         Error::Unbounded => (),
-    //         Error::Infeasible => panic!("problem should be unbounded"),
-    //     }
-    // }
+    #[test]
+    fn test_7() {
+        let x = Variable::new();
+        let y = Variable::new();
+
+        let objective = AffExpr::new(&[(-1.0, &x), (4.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(-2.0, &x), (-1.0, &y)], 4.0);
+        let c_2 = Inequality::new(&[(-2.0, &x), (4.0, &y)], -8.0);
+        let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        match Simplex::new(objective, constraints).optimize().unwrap_err() {
+            Error::Unbounded => (),
+            Error::Infeasible => panic!("problem should be unbounded"),
+        }
+    }
 
     #[test]
     fn test_8() {
