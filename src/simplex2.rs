@@ -165,7 +165,7 @@ impl Debug for Simplex {
 }
 
 impl Simplex {
-    fn presolve(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
+    fn new(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
         let m = constraints.len();
 
         // STEP 1: Add slack variables to all constraints to transform inequalities to
@@ -342,14 +342,14 @@ impl Simplex {
         self.pivot(i, j, &dx, &dz)
     }
 
-    fn solve(self) -> Result<Self, Error> {
+    fn optimize(self) -> Result<Self, Error> {
         if let Some(mu) = self.solve_for_mu() {
             let basis_matrix = self.basis_matrix();
             let result = match mu.step {
                 Step::Primal(j) => self.primal_step(j, mu.star, &basis_matrix)?,
                 Step::Dual(i) => self.dual_step(i, mu.star, &basis_matrix)?,
             };
-            return result.solve();
+            return result.optimize();
         }
         Ok(self)
     }
@@ -451,7 +451,7 @@ mod tests {
         let c_3 = Inequality::new(&[(1.0, &y)], 5.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::presolve(objective, constraints).solve().unwrap();
+        let result = Simplex::new(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), 31.0);
         assert_eq!(result.solution(&x), 4.0);
         assert_eq!(result.solution(&y), 5.0);
@@ -469,7 +469,7 @@ mod tests {
         let c_3 = Inequality::new(&[(3.0, &x_1), (4.0, &x_2), (2.0, &x_3)], 8.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::presolve(objective, constraints).solve().unwrap();
+        let result = Simplex::new(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), 13.0);
         assert_eq!(result.solution(&x_1), 2.0);
         assert_eq!(result.solution(&x_2), 0.0);
@@ -506,7 +506,7 @@ mod tests {
         let c_7 = Inequality::new(&[(1.0, &x_4)], 1.0);
         let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7];
 
-        let result = Simplex::presolve(objective, constraints).solve().unwrap();
+        let result = Simplex::new(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), 750.0);
         assert_eq!(result.solution(&x_1), 1.0);
         assert_eq!(result.solution(&x_2), 0.0);
@@ -526,7 +526,7 @@ mod tests {
         let c_3 = Inequality::new(&[(2.0, &x_1), (2.0, &x_2), (1.0, &x_3)], 20.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::presolve(objective, constraints).solve().unwrap();
+        let result = Simplex::new(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), 136.0);
         assert_eq!(result.solution(&x_1), 4.0);
         assert_eq!(result.solution(&x_2), 4.0);
@@ -544,7 +544,7 @@ mod tests {
         let c_3 = Inequality::new(&[(-1.0, &x), (3.0, &y)], -7.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::presolve(objective, constraints).solve().unwrap();
+        let result = Simplex::new(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), -7.0);
         assert_eq!(result.solution(&x), 7.0);
         assert_eq!(result.solution(&y), 0.0);
@@ -562,7 +562,7 @@ mod tests {
         let c_3 = Inequality::new(&[(-2.0, &x_1), (-2.0, &x_2), (-1.0, &x_3)], -20.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::presolve(objective, constraints).solve().unwrap();
+        let result = Simplex::new(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), -136.0);
         assert_eq!(result.solution(&x_1), 4.0);
         assert_eq!(result.solution(&x_2), 4.0);
@@ -600,7 +600,7 @@ mod tests {
         let c_3 = Inequality::new(&[(1.0, &y)], 1.0);
         let constraints = vec![c_1, c_2, c_3];
 
-        let result = Simplex::presolve(objective, constraints).solve().unwrap();
+        let result = Simplex::new(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), -1.0);
         assert_eq!(result.solution(&x), 2.0);
         assert_eq!(result.solution(&y), 1.0);
@@ -626,7 +626,7 @@ mod tests {
         let c_8 = Inequality::new(&[(-2.0, &x_2), (-1.0, &x_5), (-1.0, &x_6)], -13.0);
         let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7, c_8];
 
-        let result = Simplex::presolve(objective, constraints).solve().unwrap();
+        let result = Simplex::new(objective, constraints).optimize().unwrap();
         assert_eq!(result.objective_value(), 33.0);
         assert_eq!(result.solution(&x_1), 8.0);
         assert_eq!(result.solution(&x_2), 4.0);
