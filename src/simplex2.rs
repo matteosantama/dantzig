@@ -256,7 +256,7 @@ impl Simplex {
     }
 
     /// Index `j` enters the basis and `i` exits.
-    fn swap(mut self, i: usize, j: usize) -> Result<Self, Error> {
+    fn swap(mut self, i: usize, j: usize) -> Self {
         assert!(self.b_key.contains_key(&i) && !self.b_key.contains_key(&j));
         assert!(self.n_key.contains_key(&j) && !self.n_key.contains_key(&i));
 
@@ -269,10 +269,10 @@ impl Simplex {
         assert!(self.b_key.remove(&i).is_some());
         assert!(self.n_key.remove(&j).is_some());
 
-        Ok(self)
+        self
     }
 
-    fn pivot(mut self, i: usize, j: usize, dx: &[f64], dz: &[f64]) -> Result<Self, Error> {
+    fn pivot(mut self, i: usize, j: usize, dx: &[f64], dz: &[f64]) -> Self {
         let b_i = self.b_key[&i];
         let n_j = self.n_key[&j];
 
@@ -293,10 +293,7 @@ impl Simplex {
         self.constraints.collect_columns(&self.b)
     }
 
-    fn solve_for_mu(&self) -> Option<Mu> {
-        assert_eq!(self.x.len(), self.x_bar.len());
-        assert_eq!(self.z.len(), self.z_bar.len());
-
+    fn status(self) -> Result<Status, Error> {
         let (i, primal) = try_pick_enter(&self.b, &self.x, &self.x_bar);
         let (j, dual) = try_pick_enter(&self.n, &self.z, &self.z_bar);
 
@@ -316,42 +313,37 @@ impl Simplex {
         Some(mu)
     }
 
-    fn primal_step(
-        mut self,
-        j: usize,
-        mu_star: f64,
-        basis_matrix: &CscMatrix,
-    ) -> Result<Self, Error> {
-        let dx = self.solve_for_dx(j, basis_matrix);
-        let i = pick_exit(mu_star, &self.x, &self.x_bar, &dx, &self.b);
-        let dz = self.solve_for_dz(i, basis_matrix);
+    fn primal_step(mut self, j: usize, mu: f64) -> Self {
+        let basis_matrix = self.basis_matrix();
+
+        let dx = self.solve_for_dx(j, &basis_matrix);
+        let i = pick_exit(mu, &self.x, &self.x_bar, &dx, &self.b);
+        let dz = self.solve_for_dz(i, &basis_matrix);
 
         self.pivot(i, j, &dx, &dz)
     }
 
-    fn dual_step(
-        mut self,
-        i: usize,
-        mu_star: f64,
-        basis_matrix: &CscMatrix,
-    ) -> Result<Self, Error> {
-        let dz = self.solve_for_dz(i, basis_matrix);
-        let j = pick_exit(mu_star, &self.z, &self.z_bar, &dz, &self.n);
-        let dx = self.solve_for_dx(j, basis_matrix);
+    fn dual_step(mut self, i: usize, mu: f64) -> Self {
+        let basis_matrix = self.basis_matrix();
+
+        let dz = self.solve_for_dz(i, &basis_matrix);
+        let j = pick_exit(mu, &self.z, &self.z_bar, &dz, &self.n);
+        let dx = self.solve_for_dx(j, &basis_matrix);
 
         self.pivot(i, j, &dx, &dz)
     }
 
     fn optimize(self) -> Result<Self, Error> {
-        if let Some(mu) = self.solve_for_mu() {
-            let basis_matrix = self.basis_matrix();
-            let result = match mu.step {
-                Step::Primal(j) => self.primal_step(j, mu.star, &basis_matrix)?,
-                Step::Dual(i) => self.dual_step(i, mu.star, &basis_matrix)?,
-            };
-            return result.optimize();
-        }
-        Ok(self)
+        self.status().map(|status| match status {
+            Status::Optimal(simplex) => Ok(simplex),
+            Status::Suboptimal(step) => {
+                let result = match step {
+                    Step::Primal(mu) => mu.simplex.primal_step(mu.index, mu.length),
+                    Step::Dual(mu) => mu.simplex.dual_step(mu.index, mu.length),
+                };
+                result.optimize()
+            }
+        })?
     }
 
     fn objective_value(&self) -> f64 {
@@ -371,16 +363,20 @@ impl Simplex {
     }
 }
 
-#[derive(Debug)]
 struct Mu {
-    star: f64,
-    step: Step,
+    simplex: Simplex,
+    index: usize,
+    length: f64,
 }
 
-#[derive(Debug)]
 enum Step {
-    Primal(usize),
-    Dual(usize),
+    Primal(Mu),
+    Dual(Mu),
+}
+
+enum Status {
+    Optimal(Simplex),
+    Suboptimal(Step),
 }
 
 fn pivot(data: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
@@ -397,6 +393,8 @@ fn pivot(data: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
 }
 
 fn try_pick_enter(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> (usize, f64) {
+    assert_eq!(bn.len(), xz.len());
+    assert_eq!(bn.len(), xz_bar.len());
     bn.iter()
         .zip(xz)
         .zip(xz_bar)
@@ -409,10 +407,10 @@ fn try_pick_enter(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> (usize, f64) {
         .unwrap_or((0, f64::NEG_INFINITY))
 }
 
-fn pick_exit(mu_star: f64, xz: &[f64], xz_bar: &[f64], dxz: &[f64], bn: &[usize]) -> usize {
+fn pick_exit(mu: f64, xz: &[f64], xz_bar: &[f64], dxz: &[f64], bn: &[usize]) -> usize {
     xz.iter()
         .zip(xz_bar)
-        .map(|(xz_k, xz_bar_k)| xz_k + mu_star * xz_bar_k)
+        .map(|(xz_k, xz_bar_k)| xz_k + mu * xz_bar_k)
         .zip(dxz)
         .map(|(denominator, dxz_k)| *dxz_k / denominator)
         .enumerate()
