@@ -144,8 +144,8 @@ impl fmt::Debug for Matrix {
             write!(f, "    ").unwrap();
             for j in 0..self.ncols {
                 match j == self.ncols - 1 {
-                    true => write!(f, "{}", self.at(i, j)),
-                    false => write!(f, "{}, ", self.at(i, j)),
+                    true => write!(f, "{:2}", self.at(i, j)),
+                    false => write!(f, "{:2}, ", self.at(i, j)),
                 }
                 .unwrap();
             }
