@@ -234,7 +234,7 @@ impl Simplex {
     }
 
     /// Index `j` enters the basis and `i` exits.
-    fn swap(&mut self, i: usize, j: usize) {
+    fn swap(mut self, i: usize, j: usize) -> Result<Self, Error> {
         let b_position = self.b_position_by_id.remove(&self.ids[i]).unwrap();
         assert_eq!(b_position, self.positions[i]);
         assert!(!self.b_position_by_id.contains_key(&self.ids[j]));
@@ -244,9 +244,11 @@ impl Simplex {
         self.n[self.positions[j]] = i;
 
         self.positions.swap(i, j);
+
+        Ok(self)
     }
 
-    fn pivot(&mut self, i: usize, j: usize, dx: &[f64], dz: &[f64]) {
+    fn pivot(mut self, i: usize, j: usize, dx: &[f64], dz: &[f64]) -> Result<Self, Error> {
         let t = safe_divide(self.x[self.positions[i]], dx[self.positions[i]]);
         let s = safe_divide(self.z[self.positions[j]], dz[self.positions[j]]);
         let t_bar = safe_divide(self.x_bar[self.positions[i]], dx[self.positions[i]]);
@@ -257,7 +259,7 @@ impl Simplex {
         pivot(&mut self.z, dz, self.positions[j], s);
         pivot(&mut self.z_bar, dz, self.positions[j], s_bar);
 
-        self.swap(i, j);
+        self.swap(i, j)
     }
 
     fn basis_matrix(&self) -> CscMatrix {
@@ -268,8 +270,8 @@ impl Simplex {
         assert_eq!(self.x.len(), self.x_bar.len());
         assert_eq!(self.z.len(), self.z_bar.len());
 
-        let (i, primal) = try_pick_enter_index(&self.b, &self.x, &self.x_bar);
-        let (j, dual) = try_pick_enter_index(&self.n, &self.z, &self.z_bar);
+        let (i, primal) = try_pick_enter(&self.b, &self.x, &self.x_bar);
+        let (j, dual) = try_pick_enter(&self.n, &self.z, &self.z_bar);
 
         if primal <= 0.0 && dual <= 0.0 {
             return None;
@@ -294,14 +296,10 @@ impl Simplex {
         basis_matrix: &CscMatrix,
     ) -> Result<Self, Error> {
         let dx = self.solve_for_dx(j, basis_matrix);
-        let i = pick_exit_index(mu_star, &self.x, &self.x_bar, &dx, &self.b);
+        let i = pick_exit(mu_star, &self.x, &self.x_bar, &dx, &self.b);
         let dz = self.solve_for_dz(i, basis_matrix);
 
-        dbg!("primal", &dx, &dz);
-
-        self.pivot(i, j, &dx, &dz);
-
-        Ok(self)
+        self.pivot(i, j, &dx, &dz)
     }
 
     fn dual_step(
@@ -310,16 +308,11 @@ impl Simplex {
         mu_star: f64,
         basis_matrix: &CscMatrix,
     ) -> Result<Self, Error> {
-        dbg!(basis_matrix.clone().to_dense());
         let dz = self.solve_for_dz(i, basis_matrix);
-        let j = pick_exit_index(mu_star, &self.z, &self.z_bar, &dz, &self.n);
+        let j = pick_exit(mu_star, &self.z, &self.z_bar, &dz, &self.n);
         let dx = self.solve_for_dx(j, basis_matrix);
 
-        dbg!("dual", &dx, &dz);
-
-        self.pivot(i, j, &dx, &dz);
-
-        Ok(self)
+        self.pivot(i, j, &dx, &dz)
     }
 
     fn optimize(self) -> Result<Self, Error> {
@@ -363,8 +356,8 @@ enum Step {
     Dual(usize),
 }
 
-fn pivot(values: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
-    values
+fn pivot(data: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
+    data
         .iter_mut()
         .zip(delta.iter())
         .enumerate()
@@ -377,7 +370,7 @@ fn pivot(values: &mut [f64], delta: &[f64], index: usize, step_length: f64) {
         });
 }
 
-fn try_pick_enter_index(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> (usize, f64) {
+fn try_pick_enter(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> (usize, f64) {
     bn.iter()
         .zip(xz)
         .zip(xz_bar)
@@ -390,7 +383,7 @@ fn try_pick_enter_index(bn: &[usize], xz: &[f64], xz_bar: &[f64]) -> (usize, f64
         .unwrap_or((0, f64::NEG_INFINITY))
 }
 
-fn pick_exit_index(mu_star: f64, xz: &[f64], xz_bar: &[f64], dxz: &[f64], bn: &[usize]) -> usize {
+fn pick_exit(mu_star: f64, xz: &[f64], xz_bar: &[f64], dxz: &[f64], bn: &[usize]) -> usize {
     xz.iter()
         .zip(xz_bar)
         .map(|(xz_k, xz_bar_k)| xz_k + mu_star * xz_bar_k)
