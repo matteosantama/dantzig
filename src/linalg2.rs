@@ -139,7 +139,7 @@ impl From<&CscMatrix> for Matrix {
 
 impl fmt::Debug for Matrix {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "[\n").unwrap();
+        writeln!(f, "[").unwrap();
         for i in 0..self.nrows {
             write!(f, "    ").unwrap();
             for j in 0..self.ncols {
@@ -149,7 +149,7 @@ impl fmt::Debug for Matrix {
                 }
                 .unwrap();
             }
-            write!(f, "\n").unwrap();
+            writeln!(f).unwrap();
         }
         write!(f, "]")
     }
