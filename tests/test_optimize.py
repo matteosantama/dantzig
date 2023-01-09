@@ -1,7 +1,7 @@
 import dantzig as dz
 
 
-def test_minimization_problem() -> None:
+def test_problem_1() -> None:
     x = dz.Variable.nonneg()
     y = dz.Variable.nonneg()
 
@@ -10,6 +10,11 @@ def test_minimization_problem() -> None:
     assert solution[x] == 0.0
     assert solution[y] == 3.0
 
+
+def test_problem_2() -> None:
+    x = dz.Variable.nonneg()
+    y = dz.Variable.nonneg()
+
     solution = (
         dz.Minimize(2 * x - 2 * y).subject_to([y <= 5, x >= y + 1, y == 5.0]).solve()
     )
@@ -17,6 +22,10 @@ def test_minimization_problem() -> None:
     assert solution[x] == 6.0
     assert solution[y] == 5.0
 
+
+def test_problem_3() -> None:
+    x = dz.Variable.nonneg()
+    y = dz.Variable.nonneg()
     z = dz.Variable.nonneg()
 
     solution = dz.Min(x + y - z).st(x + y + z <= 1).solve()
@@ -25,11 +34,42 @@ def test_minimization_problem() -> None:
     assert solution[y] == 0.0
     assert solution[z] == 1.0
 
+
+def test_problem_4() -> None:
+    x = dz.Variable.nonneg()
+    y = dz.Variable.nonneg()
+    z = dz.Variable.nonneg()
+
     solution = dz.Min(x + y + z).st(x - y == -2).solve()
     assert solution.objective_value == 2.0
     assert solution[x] == 0.0
     assert solution[y] == 2.0
     assert solution[z] == 0.0
+
+
+# def test_problem_5() -> None:
+#     x_1 = dz.Var(lb=0.0, ub=1.0)
+#     x_2 = dz.Var(lb=0.0, ub=1.0)
+#     x_3 = dz.Var(lb=0.0, ub=1.0)
+#     x_4 = dz.Var(lb=0.0, ub=1.0)
+#
+#     objective = 300 * x_1 + 90 * x_2 + 400 * x_3 + 150 * x_4
+#     constraints = [
+#         # TODO: segfault
+#         #   35_000 * x_1 + 10_000 * x_2 + 25_000 * x_3 + 90_000 * x_4 <= 120_000,
+#         # TODO: unbounded
+#         35 * x_1 + 10 * x_2 + 25 * x_3 + 90 * x_4 <= 120,
+#         4 * x_1 + 2 * x_2 + 7 * x_3 + 3 * x_4 <= 12,
+#         x_1 + x_2 <= 1,
+#     ]
+#
+#     problem = dz.Max(objective).st(constraints)
+#     soln = problem.solve()
+#     assert soln.objective_value == 700.0
+#     assert soln[x_1] == 1.0
+#     assert soln[x_2] == 0.0
+#     assert soln[x_3] == 1.0
+#     assert soln[x_4] == 0.0
 
 
 def test_minimization_maximization_equivalence() -> None:
