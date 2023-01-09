@@ -7,22 +7,47 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+const EPSILON: f64 = 1e-12;
+
 #[derive(Clone)]
 struct Variable {
     id: usize,
+    lb: Option<f64>,
+    ub: Option<f64>,
 }
 
 impl Variable {
-    fn new() -> Self {
+    fn new(lb: Option<f64>, ub: Option<f64>) -> Self {
         Self {
             id: COUNTER.fetch_add(1, Ordering::Relaxed),
+            lb,
+            ub,
         }
+    }
+
+    fn nonneg() -> Self {
+        Self::new(Some(0.0), None)
     }
 }
 
 struct LinExpr {
     coefs: Vec<f64>,
     vars: Vec<Variable>,
+}
+
+impl LinExpr {
+    fn split_variables(self, key: &HashMap<usize, (Variable, Variable)>) -> Self {
+        let mut coefs = Vec::with_capacity(2 * self.coefs.len());
+        let mut vars = Vec::with_capacity(2 * self.vars.len());
+        for (coef, var) in self.coefs.into_iter().zip(self.vars) {
+            let (pos, neg) = &key[&var.id];
+            coefs.push(coef);
+            vars.push(pos.clone());
+            coefs.push(-coef);
+            vars.push(neg.clone())
+        }
+        Self { coefs, vars }
+    }
 }
 
 impl From<&[(f64, &Variable)]> for LinExpr {
@@ -45,6 +70,13 @@ impl AffExpr {
             constant,
         }
     }
+
+    fn split_variables(self, key: &HashMap<usize, (Variable, Variable)>) -> Self {
+        Self {
+            linexpr: self.linexpr.split_variables(key),
+            ..self
+        }
+    }
 }
 
 struct Inequality {
@@ -54,16 +86,15 @@ struct Inequality {
 
 impl Inequality {
     fn slacken(mut self) -> Equality {
-        let slack = Variable::new();
-        let slack_id = slack.id;
+        let slack = Variable::nonneg();
 
-        self.linexpr.vars.push(slack);
+        self.linexpr.vars.push(slack.clone());
         self.linexpr.coefs.push(1.0);
 
         Equality {
             linexpr: self.linexpr,
             b: self.b,
-            slack_id,
+            slack,
         }
     }
 
@@ -73,13 +104,19 @@ impl Inequality {
             b,
         }
     }
+
+    fn split_variables(self, key: &HashMap<usize, (Variable, Variable)>) -> Self {
+        Self {
+            linexpr: self.linexpr.split_variables(key),
+            ..self
+        }
+    }
 }
 
 struct Equality {
     linexpr: LinExpr,
     b: f64,
-    // Variable ID of the injected slack variable
-    slack_id: usize,
+    slack: Variable,
 }
 
 #[derive(Debug)]
@@ -88,12 +125,12 @@ enum Error {
     Infeasible,
 }
 
-fn iter_all_ids<'a>(
+fn chain_variable_ids<'a>(
     objective: &'a AffExpr,
-    equalities: &'a [Equality],
+    constraints: &'a [Equality],
 ) -> impl Iterator<Item = usize> + 'a {
     objective.linexpr.vars.iter().map(|var| var.id).chain(
-        equalities
+        constraints
             .iter()
             .flat_map(|equality| equality.linexpr.vars.iter().map(|var| var.id)),
     )
@@ -143,6 +180,10 @@ struct Simplex {
     b_key: HashMap<usize, usize>,
     n_key: HashMap<usize, usize>,
 
+    // Map an original variable ID to the IDs of its positive and negative
+    // parts, respectively.
+    key: HashMap<usize, (Variable, Variable)>,
+
     // If `index_to_id[i] == k`, then variable `i` (identified by position) has ID `k`.
     // It should also always be the case that `id_to_index[index_to_id[k]] == k`.
     index_to_id: Vec<usize>,
@@ -168,39 +209,69 @@ impl Debug for Simplex {
 
 impl Simplex {
     fn new(objective: AffExpr, constraints: Vec<Inequality>) -> Self {
-        let m = constraints.len();
+        let mut extra_constraints = vec![];
+        let mut key = HashMap::new();
+        objective
+            .linexpr
+            .vars
+            .iter()
+            .chain(
+                constraints
+                    .iter()
+                    .flat_map(|inequality| inequality.linexpr.vars.iter()),
+            )
+            .for_each(|var| {
+                if let Entry::Vacant(e) = key.entry(var.id) {
+                    // TODO: We don't necessarily have to introduce TWO new variables for every
+                    //  original variable. In many (most?) cases we can get away with a single
+                    //  positive or negative part. This would help both speed and numerical stability.
+                    let pos = Variable::nonneg();
+                    let neg = Variable::nonneg();
 
-        // STEP 1: Add slack variables to all constraints to transform inequalities to
-        // equalities. We store the ID of the slack variable, along with the index of
-        // its associated constraint.
-        let mut slack_ids = HashMap::with_capacity(m);
-        let equalities = constraints
+                    if let Some(ub) = var.ub {
+                        let constraint = Inequality::new(&[(1.0, &pos), (-1.0, &neg)], ub);
+                        extra_constraints.push(constraint)
+                    }
+                    if let Some(lb) = var.lb {
+                        let constraint = Inequality::new(&[(-1.0, &pos), (1.0, &neg)], -lb);
+                        extra_constraints.push(constraint)
+                    }
+                    e.insert((pos, neg));
+                }
+            });
+
+        let objective = objective.split_variables(&key);
+        let constraints = constraints
+            .into_iter()
+            .map(|inequality| inequality.split_variables(&key))
+            .chain(extra_constraints)
+            .collect::<Vec<_>>();
+
+        let mut slack_ids = HashMap::new();
+        let constraints = constraints
             .into_iter()
             .map(|inequality| {
                 let equality = inequality.slacken();
-                slack_ids.insert(equality.slack_id, equality.b);
+                slack_ids.insert(equality.slack.id, equality.b);
                 equality
             })
             .collect::<Vec<_>>();
 
-        // STEP 2: Iterate through all IDs of the problem, and reduce them to a single unique
-        // list. To each ID, we also assign an index.
         let mut index_to_id = Vec::new();
         let mut id_to_index = HashMap::new();
 
-        for id in iter_all_ids(&objective, &equalities) {
+        for id in chain_variable_ids(&objective, &constraints) {
             if let Entry::Vacant(e) = id_to_index.entry(id) {
                 e.insert(index_to_id.len());
                 index_to_id.push(id);
             }
         }
 
-        // STEP 3: Align the objective to the indices.
         let obj_const = objective.constant;
         let obj_coefs = align(objective, &id_to_index);
 
-        // STEP 4: Iterate through the unique variables, and construct our basic feasible
-        // solution.
+        let m = constraints.len();
+
         let mut b_key = HashMap::with_capacity(m);
         let mut b = Vec::with_capacity(m);
         let mut x = Vec::with_capacity(m);
@@ -226,7 +297,7 @@ impl Simplex {
         let x_bar = vec![1.0; x.len()];
         let z_bar = vec![1.0; z.len()];
 
-        let constraints = sparsify(equalities, &id_to_index);
+        let constraints = sparsify(constraints, &id_to_index);
 
         Self {
             obj_coefs,
@@ -236,6 +307,7 @@ impl Simplex {
             n,
             b_key,
             n_key,
+            key,
             index_to_id,
             id_to_index,
             x,
@@ -293,46 +365,38 @@ impl Simplex {
         self.constraints.collect_columns(&self.b)
     }
 
-    fn status(self) -> Result<Status, Error> {
-        let status = match find_first_pivot(&self.b, &self.x, &self.x_bar) {
-            None => match find_first_pivot(&self.n, &self.z, &self.z_bar) {
-                Some(j) => {
-                    let dual = -self.z[self.n_key[&j]] / self.z_bar[self.n_key[&j]];
+    fn status(self) -> Status {
+        let opt_j = find_first_pivot(&self.n, &self.z, &self.z_bar);
+        let opt_i = find_first_pivot(&self.b, &self.x, &self.x_bar);
 
-                    match dual <= 0.0 {
-                        true => Status::Optimal(self),
-                        false => Err(Error::Unbounded)?,
+        match (opt_j, opt_i) {
+            (Some(j), Some(i)) => {
+                let primal = -self.x[self.b_key[&i]] / self.x_bar[self.b_key[&i]];
+                let dual = -self.z[self.n_key[&j]] / self.z_bar[self.n_key[&j]];
+
+                match primal <= EPSILON && dual <= EPSILON {
+                    true => Status::Optimal(self),
+                    false => {
+                        let step = match primal < dual {
+                            true => Mu::primal_step(self, j, dual),
+                            false => Mu::dual_step(self, i, primal),
+                        };
+                        Status::Suboptimal(step)
                     }
                 }
-                None => panic!("unexpected code path encountered"),
-            },
-            Some(i) => match find_first_pivot(&self.n, &self.z, &self.z_bar) {
-                None => {
-                    let primal = -self.x[self.b_key[&i]] / self.x_bar[self.b_key[&i]];
-
-                    match primal <= 0.0 {
-                        true => Status::Optimal(self),
-                        false => Err(Error::Infeasible)?,
-                    }
-                }
-                Some(j) => {
-                    let primal = -self.x[self.b_key[&i]] / self.x_bar[self.b_key[&i]];
-                    let dual = -self.z[self.n_key[&j]] / self.z_bar[self.n_key[&j]];
-
-                    match primal <= 0.0 && dual <= 0.0 {
-                        true => Status::Optimal(self),
-                        false => {
-                            let step = match primal <= dual {
-                                true => Mu::primal_step(self, j, dual),
-                                false => Mu::dual_step(self, i, primal),
-                            };
-                            Status::Suboptimal(step)
-                        }
-                    }
-                }
-            },
-        };
-        Ok(status)
+            }
+            (Some(j), None) => {
+                let len = -self.z[self.n_key[&j]] / self.z_bar[self.n_key[&j]];
+                let step = Mu::primal_step(self, j, len);
+                Status::Suboptimal(step)
+            }
+            (None, Some(i)) => {
+                let len = -self.x[self.b_key[&i]] / self.x_bar[self.b_key[&i]];
+                let step = Mu::dual_step(self, i, len);
+                Status::Suboptimal(step)
+            }
+            (None, None) => panic!("unexpected code path"),
+        }
     }
 
     fn primal_step(mut self, j: usize, mu: f64) -> Result<Self, Error> {
@@ -340,7 +404,7 @@ impl Simplex {
 
         let dx = self.solve_for_dx(j, &basis_matrix);
         let i =
-            find_second_pivot(mu, &self.x, &self.x_bar, &dx, &self.b).ok_or(Error::Infeasible)?;
+            find_second_pivot(mu, &self.x, &self.x_bar, &dx, &self.b).ok_or(Error::Unbounded)?;
         let dz = self.solve_for_dz(i, &basis_matrix);
 
         self.pivot(i, j, &dx, &dz);
@@ -352,7 +416,7 @@ impl Simplex {
 
         let dz = self.solve_for_dz(i, &basis_matrix);
         let j =
-            find_second_pivot(mu, &self.z, &self.z_bar, &dz, &self.n).ok_or(Error::Unbounded)?;
+            find_second_pivot(mu, &self.z, &self.z_bar, &dz, &self.n).ok_or(Error::Infeasible)?;
         let dx = self.solve_for_dx(j, &basis_matrix);
 
         self.pivot(i, j, &dx, &dz);
@@ -360,7 +424,7 @@ impl Simplex {
     }
 
     fn solve(self) -> Result<Self, Error> {
-        self.status().map(|status| match status {
+        match self.status() {
             Status::Optimal(simplex) => Ok(simplex),
             Status::Suboptimal(step) => {
                 let result = match step {
@@ -369,7 +433,7 @@ impl Simplex {
                 };
                 result.solve()
             }
-        })?
+        }
     }
 
     fn objective_value(&self) -> f64 {
@@ -382,10 +446,18 @@ impl Simplex {
     }
 
     fn solution(&self, var: &Variable) -> f64 {
-        self.b_key
-            .get(&self.id_to_index[&var.id])
+        let (pos_var, neg_var) = &self.key[&var.id];
+        let pos = self
+            .b_key
+            .get(&self.id_to_index[&pos_var.id])
             .map(|t| self.x[*t])
-            .unwrap_or(0.0)
+            .unwrap_or(0.0);
+        let neg = self
+            .b_key
+            .get(&self.id_to_index[&neg_var.id])
+            .map(|t| self.x[*t])
+            .unwrap_or(0.0);
+        pos - neg
     }
 }
 
@@ -492,10 +564,14 @@ fn safe_divide(x: f64, y: f64) -> f64 {
 mod tests {
     use crate::simplex2::*;
 
+    fn assert_approx_eq(result: f64, expected: f64) {
+        assert!((result - expected).abs() <= EPSILON)
+    }
+
     #[test]
     fn test_1() {
-        let x = Variable::new();
-        let y = Variable::new();
+        let x = Variable::nonneg();
+        let y = Variable::nonneg();
 
         let objective = AffExpr::new(&[(4.0, &x), (3.0, &y)], 0.0);
         let c_1 = Inequality::new(&[(1.0, &x), (-1.0, &y)], 1.0);
@@ -504,16 +580,17 @@ mod tests {
         let constraints = vec![c_1, c_2, c_3];
 
         let result = Simplex::new(objective, constraints).solve().unwrap();
-        assert_eq!(result.objective_value(), 31.0);
-        assert_eq!(result.solution(&x), 4.0);
-        assert_eq!(result.solution(&y), 5.0);
+
+        assert_approx_eq(result.objective_value(), 31.0);
+        assert_approx_eq(result.solution(&x), 4.0);
+        assert_approx_eq(result.solution(&y), 5.0);
     }
 
     #[test]
     fn test_2() {
-        let x_1 = Variable::new();
-        let x_2 = Variable::new();
-        let x_3 = Variable::new();
+        let x_1 = Variable::nonneg();
+        let x_2 = Variable::nonneg();
+        let x_3 = Variable::nonneg();
 
         let objective = AffExpr::new(&[(5.0, &x_1), (4.0, &x_2), (3.0, &x_3)], 0.0);
         let c_1 = Inequality::new(&[(2.0, &x_1), (3.0, &x_2), (1.0, &x_3)], 5.0);
@@ -522,20 +599,21 @@ mod tests {
         let constraints = vec![c_1, c_2, c_3];
 
         let result = Simplex::new(objective, constraints).solve().unwrap();
-        assert_eq!(result.objective_value(), 13.0);
-        assert_eq!(result.solution(&x_1), 2.0);
-        assert_eq!(result.solution(&x_2), 0.0);
-        assert_eq!(result.solution(&x_3), 0.9999999999999998);
+
+        assert_approx_eq(result.objective_value(), 13.0);
+        assert_approx_eq(result.solution(&x_1), 2.0);
+        assert_approx_eq(result.solution(&x_2), 0.0);
+        assert_approx_eq(result.solution(&x_3), 1.0);
     }
 
     #[test]
     fn test_3() {
         // LP relaxation of the problem on page C-10
         // http://web.tecnico.ulisboa.pt/mcasquilho/compute/_linpro/TaylorB_module_c.pdf
-        let x_1 = Variable::new();
-        let x_2 = Variable::new();
-        let x_3 = Variable::new();
-        let x_4 = Variable::new();
+        let x_1 = Variable::nonneg();
+        let x_2 = Variable::nonneg();
+        let x_3 = Variable::nonneg();
+        let x_4 = Variable::nonneg();
 
         let objective = AffExpr::new(
             &[(300.0, &x_1), (90.0, &x_2), (400.0, &x_3), (150.0, &x_4)],
@@ -559,18 +637,19 @@ mod tests {
         let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7];
 
         let result = Simplex::new(objective, constraints).solve().unwrap();
-        assert_eq!(result.objective_value(), 750.0);
-        assert_eq!(result.solution(&x_1), 1.0);
-        assert_eq!(result.solution(&x_2), 0.0);
-        assert_eq!(result.solution(&x_3), 1.0000000000000009);
-        assert_eq!(result.solution(&x_4), 0.3333333333333314);
+
+        assert_approx_eq(result.objective_value(), 750.0);
+        assert_approx_eq(result.solution(&x_1), 1.0);
+        assert_approx_eq(result.solution(&x_2), 0.0);
+        assert_approx_eq(result.solution(&x_3), 1.0);
+        assert_approx_eq(result.solution(&x_4), 1.0 / 3.0);
     }
 
     #[test]
     fn test_4() {
-        let x_1 = Variable::new();
-        let x_2 = Variable::new();
-        let x_3 = Variable::new();
+        let x_1 = Variable::nonneg();
+        let x_2 = Variable::nonneg();
+        let x_3 = Variable::nonneg();
 
         let objective = AffExpr::new(&[(10.0, &x_1), (12.0, &x_2), (12.0, &x_3)], 0.0);
         let c_1 = Inequality::new(&[(1.0, &x_1), (2.0, &x_2), (2.0, &x_3)], 20.0);
@@ -579,16 +658,17 @@ mod tests {
         let constraints = vec![c_1, c_2, c_3];
 
         let result = Simplex::new(objective, constraints).solve().unwrap();
-        assert_eq!(result.objective_value(), 136.0);
-        assert_eq!(result.solution(&x_1), 4.0);
-        assert_eq!(result.solution(&x_2), 4.0);
-        assert_eq!(result.solution(&x_3), 4.0);
+
+        assert_approx_eq(result.objective_value(), 136.0);
+        assert_approx_eq(result.solution(&x_1), 4.0);
+        assert_approx_eq(result.solution(&x_2), 4.0);
+        assert_approx_eq(result.solution(&x_3), 4.0);
     }
 
     #[test]
     fn test_5() {
-        let x = Variable::new();
-        let y = Variable::new();
+        let x = Variable::nonneg();
+        let y = Variable::nonneg();
 
         let objective = AffExpr::new(&[(-1.0, &x), (-1.0, &y)], 0.0);
         let c_1 = Inequality::new(&[(-2.0, &x), (-1.0, &y)], 4.0);
@@ -597,16 +677,17 @@ mod tests {
         let constraints = vec![c_1, c_2, c_3];
 
         let result = Simplex::new(objective, constraints).solve().unwrap();
-        assert_eq!(result.objective_value(), -7.0);
-        assert_eq!(result.solution(&x), 7.0);
-        assert_eq!(result.solution(&y), 0.0);
+
+        assert_approx_eq(result.objective_value(), -7.0);
+        assert_approx_eq(result.solution(&x), 7.0);
+        assert_approx_eq(result.solution(&y), 0.0);
     }
 
     #[test]
     fn test_6() {
-        let x_1 = Variable::new();
-        let x_2 = Variable::new();
-        let x_3 = Variable::new();
+        let x_1 = Variable::nonneg();
+        let x_2 = Variable::nonneg();
+        let x_3 = Variable::nonneg();
 
         let objective = AffExpr::new(&[(-10.0, &x_1), (-12.0, &x_2), (-12.0, &x_3)], 0.0);
         let c_1 = Inequality::new(&[(-1.0, &x_1), (-2.0, &x_2), (-2.0, &x_3)], -20.0);
@@ -615,16 +696,66 @@ mod tests {
         let constraints = vec![c_1, c_2, c_3];
 
         let result = Simplex::new(objective, constraints).solve().unwrap();
-        assert_eq!(result.objective_value(), -136.0);
-        assert_eq!(result.solution(&x_1), 4.0);
-        assert_eq!(result.solution(&x_2), 4.0);
-        assert_eq!(result.solution(&x_3), 4.0);
+
+        assert_approx_eq(result.objective_value(), -136.0);
+        assert_approx_eq(result.solution(&x_1), 4.0);
+        assert_approx_eq(result.solution(&x_2), 4.0);
+        assert_approx_eq(result.solution(&x_3), 4.0);
+    }
+
+    #[test]
+    fn test_8() {
+        let x = Variable::nonneg();
+        let y = Variable::nonneg();
+
+        let objective = AffExpr::new(&[(-2.0, &x), (3.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(-1.0, &x), (1.0, &y)], -1.0);
+        let c_2 = Inequality::new(&[(-1.0, &x), (-2.0, &y)], -2.0);
+        let c_3 = Inequality::new(&[(1.0, &y)], 1.0);
+        let constraints = vec![c_1, c_2, c_3];
+
+        let result = Simplex::new(objective, constraints).solve().unwrap();
+
+        assert_approx_eq(result.objective_value(), -1.0);
+        assert_approx_eq(result.solution(&x), 2.0);
+        assert_approx_eq(result.solution(&y), 1.0);
+    }
+
+    #[test]
+    fn test_9() {
+        let x_1 = Variable::nonneg();
+        let x_2 = Variable::nonneg();
+        let x_3 = Variable::nonneg();
+        let x_4 = Variable::nonneg();
+        let x_5 = Variable::nonneg();
+        let x_6 = Variable::nonneg();
+
+        let objective = AffExpr::new(&[(2.0, &x_2), (3.0, &x_5)], 10.0);
+        let c_1 = Inequality::new(&[(1.0, &x_1), (-1.0, &x_2), (1.0, &x_4)], 4.0);
+        let c_2 = Inequality::new(&[(-1.0, &x_1), (1.0, &x_2), (-1.0, &x_4)], -4.0);
+        let c_3 = Inequality::new(&[(3.0, &x_2), (1.0, &x_3), (-1.0, &x_5)], 12.0);
+        let c_4 = Inequality::new(&[(-3.0, &x_2), (-1.0, &x_3), (1.0, &x_5)], -12.0);
+        let c_5 = Inequality::new(&[(1.0, &x_2), (1.0, &x_4), (2.0, &x_5)], 14.0);
+        let c_6 = Inequality::new(&[(-1.0, &x_2), (-1.0, &x_4), (-2.0, &x_5)], -14.0);
+        let c_7 = Inequality::new(&[(2.0, &x_2), (1.0, &x_5), (1.0, &x_6)], 13.0);
+        let c_8 = Inequality::new(&[(-2.0, &x_2), (-1.0, &x_5), (-1.0, &x_6)], -13.0);
+        let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7, c_8];
+
+        let result = Simplex::new(objective, constraints).solve().unwrap();
+
+        assert_approx_eq(result.objective_value(), 33.0);
+        assert_approx_eq(result.solution(&x_1), 8.0);
+        assert_approx_eq(result.solution(&x_2), 4.0);
+        assert_approx_eq(result.solution(&x_3), 5.0);
+        assert_approx_eq(result.solution(&x_4), 0.0);
+        assert_approx_eq(result.solution(&x_5), 5.0);
+        assert_approx_eq(result.solution(&x_6), 0.0);
     }
 
     #[test]
     fn test_unbounded_1() {
-        let x = Variable::new();
-        let y = Variable::new();
+        let x = Variable::nonneg();
+        let y = Variable::nonneg();
 
         let objective = AffExpr::new(&[(-1.0, &x), (4.0, &y)], 0.0);
         let c_1 = Inequality::new(&[(-2.0, &x), (-1.0, &y)], 4.0);
@@ -640,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_unbounded_2() {
-        let x = Variable::new();
+        let x = Variable::nonneg();
 
         let objective = AffExpr::new(&[(1.0, &x)], 0.0);
         let c_1 = Inequality::new(&[(-2.0, &x)], -4.0);
@@ -654,11 +785,11 @@ mod tests {
 
     #[test]
     fn test_infeasible_1() {
-        let x = Variable::new();
-        let y = Variable::new();
+        let x = Variable::nonneg();
+        let y = Variable::nonneg();
 
         let objective = AffExpr::new(&[(1.0, &x), (1.0, &y)], 0.0);
-        let c_1 = Inequality::new(&[(1.0, &x)], -1.0);
+        let c_1 = Inequality::new(&[(1.0, &x)], -0.5);
         let constraints = vec![c_1];
 
         match Simplex::new(objective, constraints).solve().unwrap_err() {
@@ -669,11 +800,11 @@ mod tests {
 
     #[test]
     fn test_infeasible_2() {
-        let x = Variable::new();
-        let y = Variable::new();
+        let x = Variable::nonneg();
+        let y = Variable::nonneg();
 
-        let objective = AffExpr::new(&[(1.0, &x), (-1.0, &y)], 0.0);
-        let c_1 = Inequality::new(&[(1.0, &x), (1.0, &y)], -1.0);
+        let objective = AffExpr::new(&[(1.0, &x), (1.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(1.0, &x)], -2.0);
         let constraints = vec![c_1];
 
         match Simplex::new(objective, constraints).solve().unwrap_err() {
@@ -683,49 +814,17 @@ mod tests {
     }
 
     #[test]
-    fn test_8() {
-        let x = Variable::new();
-        let y = Variable::new();
+    fn test_infeasible_3() {
+        let x = Variable::nonneg();
+        let y = Variable::nonneg();
 
-        let objective = AffExpr::new(&[(-2.0, &x), (3.0, &y)], 0.0);
-        let c_1 = Inequality::new(&[(-1.0, &x), (1.0, &y)], -1.0);
-        let c_2 = Inequality::new(&[(-1.0, &x), (-2.0, &y)], -2.0);
-        let c_3 = Inequality::new(&[(1.0, &y)], 1.0);
-        let constraints = vec![c_1, c_2, c_3];
+        let objective = AffExpr::new(&[(1.0, &x), (-1.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(1.0, &x), (1.0, &y)], -1.0);
+        let constraints = vec![c_1];
 
-        let result = Simplex::new(objective, constraints).solve().unwrap();
-        assert_eq!(result.objective_value(), -1.0);
-        assert_eq!(result.solution(&x), 2.0);
-        assert_eq!(result.solution(&y), 1.0);
-    }
-
-    #[test]
-    fn test_9() {
-        let x_1 = Variable::new();
-        let x_2 = Variable::new();
-        let x_3 = Variable::new();
-        let x_4 = Variable::new();
-        let x_5 = Variable::new();
-        let x_6 = Variable::new();
-
-        let objective = AffExpr::new(&[(2.0, &x_2), (3.0, &x_5)], 10.0);
-        let c_1 = Inequality::new(&[(1.0, &x_1), (-1.0, &x_2), (1.0, &x_4)], 4.0);
-        let c_2 = Inequality::new(&[(-1.0, &x_1), (1.0, &x_2), (-1.0, &x_4)], -4.0);
-        let c_3 = Inequality::new(&[(3.0, &x_2), (1.0, &x_3), (-1.0, &x_5)], 12.0);
-        let c_4 = Inequality::new(&[(-3.0, &x_2), (-1.0, &x_3), (1.0, &x_5)], -12.0);
-        let c_5 = Inequality::new(&[(1.0, &x_2), (1.0, &x_4), (2.0, &x_5)], 14.0);
-        let c_6 = Inequality::new(&[(-1.0, &x_2), (-1.0, &x_4), (-2.0, &x_5)], -14.0);
-        let c_7 = Inequality::new(&[(2.0, &x_2), (1.0, &x_5), (1.0, &x_6)], 13.0);
-        let c_8 = Inequality::new(&[(-2.0, &x_2), (-1.0, &x_5), (-1.0, &x_6)], -13.0);
-        let constraints = vec![c_1, c_2, c_3, c_4, c_5, c_6, c_7, c_8];
-
-        let result = Simplex::new(objective, constraints).solve().unwrap();
-        assert_eq!(result.objective_value(), 33.0);
-        assert_eq!(result.solution(&x_1), 8.0);
-        assert_eq!(result.solution(&x_2), 4.0);
-        assert_eq!(result.solution(&x_3), 5.0);
-        assert_eq!(result.solution(&x_4), 0.0);
-        assert_eq!(result.solution(&x_5), 5.0);
-        assert_eq!(result.solution(&x_6), 0.0);
+        match Simplex::new(objective, constraints).solve().unwrap_err() {
+            Error::Unbounded => panic!("problem should be infeasible"),
+            Error::Infeasible => (),
+        }
     }
 }
