@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::linalg2::{lu_solve, CscMatrix, Matrix};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
