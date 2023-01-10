@@ -19,8 +19,8 @@ def test_problem_2() -> None:
         dz.Minimize(2 * x - 2 * y).subject_to([y <= 5, x >= y + 1, y == 5.0]).solve()
     )
     assert solution.objective_value == 2.0
-    assert solution[x] == 1.0
-    assert solution[y] == 0.0
+    assert solution[x] == 6.0
+    assert solution[y] == 5.0
 
 
 def test_problem_3() -> None:

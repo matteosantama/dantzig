@@ -296,29 +296,36 @@ class AffExpr:
 
 class Constraint:
 
-    _inequality: rs.PyInequality
+    _inequalities: list[rs.PyInequality]
 
-    def __init__(self, *, inequality: rs.PyInequality) -> None:
-        self._inequality = inequality
+    def __init__(self, *, inequalities: list[rs.PyInequality]) -> None:
+        self._inequalities = inequalities
 
     @classmethod
     def equality(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
-        slack = Variable.nonneg()
-        return cls(
-            inequality=rs.PyInequality(linexpr=(linexpr + slack).to_rust_linexpr(), b=b)
+        less_than_eq_constraint = rs.PyInequality(
+            linexpr=linexpr.to_rust_linexpr(), b=b
         )
+        greater_than_eq_constraint = rs.PyInequality(
+            linexpr=linexpr.__neg__().to_rust_linexpr(), b=b.__neg__()
+        )
+        return cls(inequalities=[less_than_eq_constraint, greater_than_eq_constraint])
 
     @classmethod
     def less_than_eq(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
-        return cls(inequality=rs.PyInequality(linexpr=linexpr.to_rust_linexpr(), b=b))
+        return cls(
+            inequalities=[rs.PyInequality(linexpr=linexpr.to_rust_linexpr(), b=b)]
+        )
 
     @classmethod
     def greater_than_eq(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
         return cls(
-            inequality=rs.PyInequality(
-                linexpr=linexpr.__neg__().to_rust_linexpr(), b=b.__neg__()
-            )
+            inequalities=[
+                rs.PyInequality(
+                    linexpr=linexpr.__neg__().to_rust_linexpr(), b=b.__neg__()
+                )
+            ]
         )
 
-    def to_rust_inequality(self) -> rs.PyInequality:
-        return self._inequality
+    def rust_inequalities(self) -> list[rs.PyInequality]:
+        return self._inequalities

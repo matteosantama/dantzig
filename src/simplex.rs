@@ -776,4 +776,22 @@ mod tests {
             Error::Infeasible => (),
         }
     }
+
+    #[test]
+    fn test_infeasible_3() {
+        let x = Variable::nonneg();
+        let y = Variable::nonneg();
+
+        let objective = AffExpr::new(&[(1.0, &x), (1.0, &y)], 0.0);
+        let c_1 = Inequality::new(&[(1.0, &x), (1.0, &y)], 1.0);
+        let c_2 = Inequality::new(&[(-1.0, &x), (-1.0, &y)], -1.0);
+        let c_3 = Inequality::new(&[(1.0, &x), (1.0, &y)], 2.0);
+        let c_4 = Inequality::new(&[(-1.0, &x), (-1.0, &y)], -2.0);
+        let constraints = vec![c_1, c_2, c_3, c_4];
+
+        match Simplex::new(objective, constraints).solve().unwrap_err() {
+            Error::Unbounded => panic!("problem should be infeasible"),
+            Error::Infeasible => (),
+        }
+    }
 }

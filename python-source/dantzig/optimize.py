@@ -1,5 +1,6 @@
 import abc
-from typing import Literal, TypeVar, cast
+import itertools as it
+from typing import Iterable, Literal, TypeVar, cast
 
 import dantzig.rust as rs
 from dantzig.model import AffExpr, Constraint, LinExpr, Variable
@@ -58,6 +59,10 @@ class Optimize(abc.ABC):
 
     st = subject_to
 
+    def yield_rust_inequalities(self) -> Iterable[rs.PyInequality]:
+        for constraint in self.constraints:
+            yield from constraint.rust_inequalities()
+
     @abc.abstractmethod
     def solve(self) -> Solution:
         raise NotImplementedError
@@ -70,7 +75,7 @@ class Minimize(Optimize):
 
     def solve(self) -> Solution:
         objective = self.objective.__neg__().to_rust_affexpr()
-        constraints = [c.to_rust_inequality() for c in self.constraints]
+        constraints = list(self.yield_rust_inequalities())
         return Solution(solution=rs.solve(objective, constraints), sense=self.sense)
 
 
@@ -81,5 +86,5 @@ class Maximize(Optimize):
 
     def solve(self) -> Solution:
         objective = self.objective.to_rust_affexpr()
-        constraints = [c.to_rust_inequality() for c in self.constraints]
+        constraints = list(self.yield_rust_inequalities())
         return Solution(solution=rs.solve(objective, constraints), sense=self.sense)
