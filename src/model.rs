@@ -344,7 +344,7 @@ impl StandardForm {
         }
     }
 
-    pub fn solve(self) -> Result<Solution, Error> {
+    pub(crate) fn solve(self) -> Result<Solution, Error> {
         let objective = self.objective.linexpr.coefs();
         let constraints = self.constraints.iter().map(|x| x.linexpr.coefs()).collect();
         let rhs = self.constraints.iter().map(|x| x.constant).collect();

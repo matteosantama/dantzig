@@ -1,8 +1,8 @@
-#![feature(portable_simd, array_chunks)]
 mod error;
 mod linalg;
 mod linalg2;
 mod model;
+mod model2;
 mod simplex;
 mod simplex2;
 

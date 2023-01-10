@@ -1,121 +1,12 @@
 #![allow(dead_code)]
+use crate::error::Error;
 use crate::linalg2::{lu_solve, CscMatrix, Matrix};
+use crate::model2::{AffExpr, Inequality, LinExpr, Variable};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 const EPSILON: f64 = 1e-12;
-
-#[derive(Clone)]
-struct Variable {
-    id: usize,
-    lb: Option<f64>,
-    ub: Option<f64>,
-}
-
-impl Variable {
-    fn new(lb: Option<f64>, ub: Option<f64>) -> Self {
-        Self {
-            id: COUNTER.fetch_add(1, Ordering::Relaxed),
-            lb,
-            ub,
-        }
-    }
-
-    fn nonneg() -> Self {
-        Self::new(Some(0.0), None)
-    }
-
-    fn bounded(lb: f64, ub: f64) -> Self {
-        Self::new(Some(lb), Some(ub))
-    }
-}
-
-struct LinExpr {
-    coefs: Vec<f64>,
-    vars: Vec<Variable>,
-}
-
-impl LinExpr {
-    fn split_variables(self, key: &HashMap<usize, (Variable, Variable)>) -> Self {
-        let mut coefs = Vec::with_capacity(2 * self.coefs.len());
-        let mut vars = Vec::with_capacity(2 * self.vars.len());
-        for (coef, var) in self.coefs.into_iter().zip(self.vars) {
-            let (pos, neg) = &key[&var.id];
-            coefs.push(coef);
-            vars.push(pos.clone());
-            coefs.push(-coef);
-            vars.push(neg.clone())
-        }
-        Self { coefs, vars }
-    }
-}
-
-impl From<&[(f64, &Variable)]> for LinExpr {
-    fn from(value: &[(f64, &Variable)]) -> Self {
-        let coefs = value.iter().map(|v| v.0).collect();
-        let vars = value.iter().map(|v| v.1).cloned().collect();
-        Self { coefs, vars }
-    }
-}
-
-struct AffExpr {
-    linexpr: LinExpr,
-    constant: f64,
-}
-
-impl AffExpr {
-    fn new(linexpr: &[(f64, &Variable)], constant: f64) -> Self {
-        Self {
-            linexpr: LinExpr::from(linexpr),
-            constant,
-        }
-    }
-
-    fn split_variables(self, key: &HashMap<usize, (Variable, Variable)>) -> Self {
-        Self {
-            linexpr: self.linexpr.split_variables(key),
-            ..self
-        }
-    }
-}
-
-struct Inequality {
-    linexpr: LinExpr,
-    b: f64,
-}
-
-impl Inequality {
-    fn slacken(mut self) -> Equality {
-        let slack = Variable::nonneg();
-
-        self.linexpr.vars.push(slack.clone());
-        self.linexpr.coefs.push(1.0);
-
-        Equality {
-            linexpr: self.linexpr,
-            b: self.b,
-            slack,
-        }
-    }
-
-    fn new(linexpr: &[(f64, &Variable)], b: f64) -> Self {
-        Self {
-            linexpr: LinExpr::from(linexpr),
-            b,
-        }
-    }
-
-    fn split_variables(self, key: &HashMap<usize, (Variable, Variable)>) -> Self {
-        Self {
-            linexpr: self.linexpr.split_variables(key),
-            ..self
-        }
-    }
-}
 
 struct Equality {
     linexpr: LinExpr,
@@ -123,29 +14,49 @@ struct Equality {
     slack: Variable,
 }
 
-#[derive(Debug)]
-enum Error {
-    Unbounded,
-    Infeasible,
+/// Turn an Inequality into an Equality by injecting a non-negative slack
+/// variable.
+impl From<Inequality> for Equality {
+    fn from(mut inequality: Inequality) -> Self {
+        let slack = Variable::nonneg();
+
+        inequality.push_term(1.0, &slack);
+
+        Self {
+            linexpr: inequality.linexpr,
+            b: inequality.b,
+            slack,
+        }
+    }
+}
+
+struct Objective {
+    coefficients: Vec<f64>,
+    constant: f64,
+}
+
+impl Objective {
+    fn new(objective: AffExpr, id_to_index: &HashMap<usize, usize>) -> Self {
+        let mut coefficients = vec![0.0; id_to_index.len()];
+        for (i, var) in objective.iter_vars().enumerate() {
+            coefficients[id_to_index[&var.id]] = objective.coef(i);
+        }
+        Self {
+            coefficients,
+            constant: objective.constant(),
+        }
+    }
 }
 
 fn chain_variable_ids<'a>(
     objective: &'a AffExpr,
     constraints: &'a [Equality],
 ) -> impl Iterator<Item = usize> + 'a {
-    objective.linexpr.vars.iter().map(|var| var.id).chain(
+    objective.iter_vars().map(|var| var.id).chain(
         constraints
             .iter()
             .flat_map(|equality| equality.linexpr.vars.iter().map(|var| var.id)),
     )
-}
-
-fn align(objective: AffExpr, id_to_index: &HashMap<usize, usize>) -> Vec<f64> {
-    let mut result = vec![0.0; id_to_index.len()];
-    for (i, var) in objective.linexpr.vars.iter().enumerate() {
-        result[id_to_index[&var.id]] = objective.linexpr.coefs[i];
-    }
-    result
 }
 
 fn sparsify(constraints: Vec<Equality>, id_to_index: &HashMap<usize, usize>) -> CscMatrix {
@@ -171,9 +82,7 @@ fn sparsify(constraints: Vec<Equality>, id_to_index: &HashMap<usize, usize>) -> 
 
 /// https://dl.icdst.org/pdfs/files3/faa54c1f53965a11b03f9a13b023f9b2.pdf
 struct Simplex {
-    obj_coefs: Vec<f64>,
-    obj_const: f64,
-
+    objective: Objective,
     constraints: CscMatrix,
 
     // Indices of the basic and non-basic variables, respectively.
@@ -203,11 +112,9 @@ struct Simplex {
 
 impl Debug for Simplex {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Simplex {{ objective_value: {} }}",
-            self.objective_value()
-        )
+        let x = &self.x;
+        let z = &self.z;
+        write!(f, "Simplex {{ {x:?} {z:?} }}")
     }
 }
 
@@ -216,9 +123,7 @@ impl Simplex {
         let mut extra_constraints = vec![];
         let mut key = HashMap::new();
         objective
-            .linexpr
-            .vars
-            .iter()
+            .iter_vars()
             .chain(
                 constraints
                     .iter()
@@ -255,7 +160,7 @@ impl Simplex {
         let constraints = constraints
             .into_iter()
             .map(|inequality| {
-                let equality = inequality.slacken();
+                let equality = Equality::from(inequality);
                 slack_ids.insert(equality.slack.id, equality.b);
                 equality
             })
@@ -271,8 +176,7 @@ impl Simplex {
             }
         }
 
-        let obj_const = objective.constant;
-        let obj_coefs = align(objective, &id_to_index);
+        let objective = Objective::new(objective, &id_to_index);
 
         let m = constraints.len();
 
@@ -285,15 +189,15 @@ impl Simplex {
         let mut z = Vec::with_capacity(index_to_id.len() - m);
 
         for id in &index_to_id {
-            let index = id_to_index[id];
+            let i = id_to_index[id];
             if let Entry::Occupied(entry) = slack_ids.entry(*id) {
-                b_key.insert(index, b.len());
-                b.push(index);
+                b_key.insert(i, b.len());
+                b.push(i);
                 x.push(*entry.get())
             } else {
-                n_key.insert(index, n.len());
-                n.push(index);
-                z.push(-obj_coefs[index]);
+                n_key.insert(i, n.len());
+                n.push(i);
+                z.push(-objective.coefficients[i]);
             }
         }
 
@@ -304,8 +208,7 @@ impl Simplex {
         let constraints = sparsify(constraints, &id_to_index);
 
         Self {
-            obj_coefs,
-            obj_const,
+            objective,
             constraints,
             b,
             n,
@@ -441,11 +344,11 @@ impl Simplex {
     }
 
     fn objective_value(&self) -> f64 {
-        self.obj_const
+        self.objective.constant
             + self
                 .b_key
                 .iter()
-                .map(|(x, y)| self.obj_coefs[*x] * self.x[*y])
+                .map(|(x, y)| self.objective.coefficients[*x] * self.x[*y])
                 .sum::<f64>()
     }
 

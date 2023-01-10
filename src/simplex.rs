@@ -8,7 +8,7 @@ fn check_feasibility(objective_value: f64) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn solve(
+pub(crate) fn solve(
     objective: Vec<f64>,
     constraints: Vec<Vec<f64>>,
     rhs: Vec<f64>,

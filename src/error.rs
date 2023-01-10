@@ -1,7 +1,7 @@
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
-pub enum Error {
+pub(crate) enum Error {
     Unbounded,
     Infeasible,
 }

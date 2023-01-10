@@ -19,10 +19,11 @@ and flexibility of a Python frontend plus the raw computing speed of a Rust back
 
 Dantzig supports
 
+- A parametric self-dual solver
 - Arbitrarily restricted variables, including completely unrestricted free variables
 - `==`, `<=`, and `>=` constraints
 - Both minimization and maximization problems
-- Robust linear algebra operations, including a numerically stable LU factorization with partial pivoting
+- A numerically stable LU factorization with partial pivoting routine for robust linear algebra operations
 - Memory-efficient sparse matrix representations
 - Modern Python type-checking
 
