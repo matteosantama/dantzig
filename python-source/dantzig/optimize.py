@@ -1,5 +1,4 @@
 import abc
-import itertools as it
 from typing import Iterable, Literal, TypeVar, cast
 
 import dantzig.rust as rs

@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::fmt;
 use std::fmt::Formatter;
 
@@ -48,10 +47,12 @@ impl Matrix {
         }
     }
 
+    #[allow(dead_code)]
     fn column(&self, j: usize) -> impl Iterator<Item = &f64> {
         self.data.iter().skip(j).step_by(self.ncols)
     }
 
+    #[allow(dead_code)]
     fn row(&self, i: usize) -> impl Iterator<Item = &f64> {
         self.data.iter().skip(self.ncols * i).take(self.ncols)
     }
