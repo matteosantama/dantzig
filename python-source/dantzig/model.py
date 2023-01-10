@@ -135,6 +135,9 @@ class LinExpr:
     def to_affexpr(self) -> AffExpr:
         return AffExpr(linexpr=self, constant=0.0)
 
+    def map_ids_to_coefs(self) -> dict[int, float]:
+        return cast(dict[int, float], self._linexpr.map_ids_to_coefs())
+
     @overload
     def __add__(self, rhs: float | int | AffExpr) -> AffExpr:
         ...
@@ -207,7 +210,9 @@ class AffExpr:
     _affexpr: rs.AffExpr
 
     def __init__(self, *, linexpr: LinExpr, constant: int | float) -> None:
-        self._affexpr = rs.AffExpr(linexpr=linexpr.to_rust_linexpr(), constant=constant)
+        self._affexpr = rs.PyAffExpr(
+            linexpr=linexpr.to_rust_linexpr(), constant=constant
+        )
 
     @classmethod
     def from_rust_variable(cls, variable: rs.Variable) -> AffExpr:
@@ -282,11 +287,11 @@ class AffExpr:
     def __ge__(self, rhs: float | int | Variable | LinExpr | AffExpr) -> Constraint:
         affexpr = self - rhs
         return Constraint.greater_than_eq(
-            linexpr=affexpr.linexpr.__neg__(), b=affexpr.constant
+            linexpr=affexpr.linexpr, b=affexpr.constant.__neg__()
         )
 
     def __neg__(self) -> AffExpr:
-        return AffExpr(linexpr=self.linexpr.__neg__(), constant=-self.constant)
+        return AffExpr(linexpr=self.linexpr.__neg__(), constant=self.constant.__neg__())
 
 
 class Constraint:
@@ -299,15 +304,21 @@ class Constraint:
     @classmethod
     def equality(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
         slack = Variable.nonneg()
-        return cls(inequality=rs.PyInequality(linexpr=linexpr + slack, b=b))
+        return cls(
+            inequality=rs.PyInequality(linexpr=(linexpr + slack).to_rust_linexpr(), b=b)
+        )
 
     @classmethod
     def less_than_eq(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
-        return cls(inequality=rs.PyInequality(linexpr=linexpr, b=b))
+        return cls(inequality=rs.PyInequality(linexpr=linexpr.to_rust_linexpr(), b=b))
 
     @classmethod
     def greater_than_eq(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
-        return cls(inequality=rs.PyInequality(linexpr=linexpr.__neg__(), b=b.__neg__()))
+        return cls(
+            inequality=rs.PyInequality(
+                linexpr=linexpr.__neg__().to_rust_linexpr(), b=b.__neg__()
+            )
+        )
 
     def to_rust_inequality(self) -> rs.PyInequality:
         return self._inequality

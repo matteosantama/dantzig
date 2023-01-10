@@ -4,11 +4,7 @@ from dantzig.model import AffExpr, LinExpr
 
 def linexprs_equal(x: LinExpr, y: LinExpr) -> bool:
     """Doesn't validate order, only contents."""
-
-    def expand(z: LinExpr) -> dict[int, float]:
-        return {var.id: coef for coef, var in z.iter_terms()}
-
-    return expand(x) == expand(y)
+    return x.map_ids_to_coefs() == y.map_ids_to_coefs()
 
 
 def affexprs_equal(x: AffExpr, y: AffExpr) -> bool:

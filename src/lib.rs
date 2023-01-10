@@ -6,7 +6,7 @@ mod simplex;
 
 use crate::error::Error;
 use crate::model::Inequality;
-use crate::pyobjs::{PyAffExpr, PyInequality, PySolution, Variable};
+use crate::pyobjs::{PyAffExpr, PyInequality, PyLinExpr, PySolution, Variable};
 use crate::simplex::Simplex;
 use pyo3::prelude::*;
 
@@ -29,6 +29,7 @@ fn solve(objective: PyAffExpr, constraints: Vec<PyInequality>) -> PyResult<PySol
 #[pymodule]
 fn rust(_: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Variable>()?;
+    m.add_class::<PyLinExpr>()?;
     m.add_class::<PyAffExpr>()?;
     m.add_class::<PyInequality>()?;
     m.add_class::<PySolution>()?;

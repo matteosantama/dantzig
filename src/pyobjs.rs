@@ -1,6 +1,7 @@
 use crate::model::LinExpr;
 use crate::simplex::Simplex;
 use pyo3::prelude::*;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -58,6 +59,15 @@ impl PyLinExpr {
         }
     }
 
+    fn map_ids_to_coefs(&self) -> HashMap<usize, f64> {
+        self.linexpr
+            .coefs
+            .iter()
+            .zip(&self.linexpr.vars)
+            .map(|(coef, var)| (var.id, *coef))
+            .collect()
+    }
+
     fn __neg__(&self) -> Self {
         Self {
             linexpr: self.linexpr.clone().__neg__(),
@@ -66,7 +76,31 @@ impl PyLinExpr {
     }
 
     fn __add__(&self, other: &Self) -> Self {
-        todo!()
+        let mut coefs = self.linexpr.coefs.clone();
+        let mut vars = self.linexpr.vars.clone();
+        let mut id_to_index = self.id_to_index.clone();
+
+        assert_eq!(coefs.len(), vars.len());
+        assert_eq!(coefs.len(), id_to_index.len());
+
+        for (&coef, var) in other.linexpr.coefs.iter().zip(&other.linexpr.vars) {
+            match id_to_index.entry(var.id) {
+                Entry::Occupied(e) => {
+                    let i = e.get();
+                    coefs[*i] += coef;
+                }
+                Entry::Vacant(e) => {
+                    e.insert(vars.len());
+                    vars.push(var.clone());
+                    coefs.push(coef);
+                }
+            }
+        }
+
+        Self {
+            linexpr: LinExpr { coefs, vars },
+            id_to_index,
+        }
     }
 
     fn __mul__(&self, constant: f64) -> Self {
@@ -80,7 +114,9 @@ impl PyLinExpr {
 #[pyclass(module = "dantzig.rust")]
 #[derive(Clone)]
 pub(crate) struct PyAffExpr {
+    #[pyo3(get)]
     pub(crate) pylinexpr: PyLinExpr,
+    #[pyo3(get)]
     pub(crate) constant: f64,
 }
 
