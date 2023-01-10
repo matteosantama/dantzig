@@ -43,6 +43,40 @@ pub(crate) struct PyLinExpr {
     id_to_index: HashMap<usize, usize>,
 }
 
+#[pymethods]
+impl PyLinExpr {
+    #[new]
+    fn new(coefs: Vec<f64>, vars: Vec<Variable>) -> Self {
+        let id_to_index = vars
+            .iter()
+            .enumerate()
+            .map(|(i, var)| (var.id, i))
+            .collect();
+        Self {
+            linexpr: LinExpr { coefs, vars },
+            id_to_index,
+        }
+    }
+
+    fn __neg__(&self) -> Self {
+        Self {
+            linexpr: self.linexpr.clone().__neg__(),
+            id_to_index: self.id_to_index.clone(),
+        }
+    }
+
+    fn __add__(&self, other: &Self) -> Self {
+        todo!()
+    }
+
+    fn __mul__(&self, constant: f64) -> Self {
+        Self {
+            linexpr: self.linexpr.clone().__add__(constant),
+            id_to_index: self.id_to_index.clone(),
+        }
+    }
+}
+
 #[pyclass(module = "dantzig.rust")]
 #[derive(Clone)]
 pub(crate) struct PyAffExpr {
@@ -50,11 +84,35 @@ pub(crate) struct PyAffExpr {
     pub(crate) constant: f64,
 }
 
+#[pymethods]
+impl PyAffExpr {
+    #[new]
+    #[args("*", linexpr, constant)]
+    fn new(linexpr: PyLinExpr, constant: f64) -> Self {
+        Self {
+            pylinexpr: linexpr,
+            constant,
+        }
+    }
+}
+
 #[pyclass(module = "dantzig.rust")]
 #[derive(Clone)]
 pub(crate) struct PyInequality {
     pub(crate) pylinexpr: PyLinExpr,
     pub(crate) b: f64,
+}
+
+#[pymethods]
+impl PyInequality {
+    #[new]
+    #[args("*", linexpr, b)]
+    fn new(linexpr: PyLinExpr, b: f64) -> Self {
+        Self {
+            pylinexpr: linexpr,
+            b,
+        }
+    }
 }
 
 #[pyclass(module = "dantzig.rust")]

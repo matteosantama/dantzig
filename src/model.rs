@@ -20,6 +20,20 @@ impl LinExpr {
         }
         Self { coefs, vars }
     }
+
+    pub(crate) fn __neg__(self) -> Self {
+        Self {
+            coefs: self.coefs.into_iter().map(|x| -x).collect(),
+            ..self
+        }
+    }
+
+    pub(crate) fn __add__(self, constant: f64) -> Self {
+        Self {
+            coefs: self.coefs.into_iter().map(|x| constant * x).collect(),
+            ..self
+        }
+    }
 }
 
 impl From<&[(f64, &Variable)]> for LinExpr {

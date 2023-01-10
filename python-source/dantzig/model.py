@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, cast, overload
+from typing import cast, overload
 
 import dantzig.rust as rs
 
@@ -120,49 +120,20 @@ class Variable:
 
 class LinExpr:
 
-    _linexpr: rs.LinExpr
+    _linexpr: rs.PyLinExpr
 
-    @classmethod
-    def reduce(cls, terms: list[tuple[float, rs.Variable]]) -> LinExpr:
-        obj = cls.__new__(cls)
-        obj._linexpr = rs.LinExpr.py_reduce(terms)
-        return obj
+    def __init__(self, *, linexpr: rs.PyLinExpr) -> None:
+        self._linexpr = linexpr
 
     @classmethod
     def from_rust_variable(cls, variable: rs.Variable) -> LinExpr:
-        obj = cls.__new__(cls)
-        obj._linexpr = rs.LinExpr.py_from_variable(variable)
-        return obj
-
-    @classmethod
-    def from_rust_linexpr(cls, linexpr: rs.LinExpr) -> LinExpr:
-        obj = cls.__new__(cls)
-        obj._linexpr = linexpr
-        return obj
+        return cls(linexpr=rs.PyLinExpr(coefs=[1.0], vars=[variable]))
 
     def to_rust_linexpr(self) -> rs.LinExpr:
         return self._linexpr
 
-    def to_linexpr(self) -> LinExpr:
-        return self
-
     def to_affexpr(self) -> AffExpr:
-        return AffExpr.from_rust_linexpr(self._linexpr)
-
-    def iter_terms(self) -> Iterable[tuple[float, Variable]]:
-        yield from self._linexpr.terms
-
-    def iter_variables(self) -> Iterable[Variable]:
-        for _, var in self.iter_terms():
-            yield var
-
-    def iter_coefs(self) -> Iterable[float]:
-        for coef, _ in self.iter_terms():
-            yield coef
-
-    @property
-    def coefs(self) -> list[float]:
-        return list(self.iter_coefs())
+        return AffExpr(linexpr=self, constant=0.0)
 
     @overload
     def __add__(self, rhs: float | int | AffExpr) -> AffExpr:
@@ -180,7 +151,7 @@ class LinExpr:
         if isinstance(rhs, Variable):
             return self + rhs.to_linexpr()
         if isinstance(rhs, LinExpr):
-            return LinExpr.reduce(terms=self._linexpr.terms + rhs._linexpr.terms)
+            return LinExpr(linexpr=self._linexpr + rhs._linexpr)
         raise TypeError(f"LinExpr.__add__() does not support {type(rhs)}")
 
     def __radd__(self, lhs: float | int) -> AffExpr:
@@ -202,7 +173,7 @@ class LinExpr:
         if isinstance(rhs, Variable):
             return self - rhs.to_linexpr()
         if isinstance(rhs, LinExpr):
-            return self + -rhs
+            return self + rhs.__neg__()
         raise TypeError(f"LinExpr.__sub__() does not support {type(rhs)}")
 
     def __rsub__(self, lhs: float | int) -> AffExpr:
@@ -211,7 +182,7 @@ class LinExpr:
     def __mul__(self, rhs: float | int) -> LinExpr:
         if not isinstance(rhs, (int, float)):
             raise TypeError("LinExpr.__mul__() only supports int and float")
-        return LinExpr.from_rust_linexpr(self._linexpr * rhs)
+        return LinExpr(linexpr=self._linexpr * rhs)
 
     def __rmul__(self, lhs: float | int) -> LinExpr:
         return self * lhs
@@ -228,7 +199,7 @@ class LinExpr:
         return self.to_affexpr() >= rhs
 
     def __neg__(self) -> LinExpr:
-        return LinExpr.from_rust_linexpr(self._linexpr.__neg__())
+        return LinExpr(linexpr=self._linexpr.__neg__())
 
 
 class AffExpr:
@@ -240,11 +211,7 @@ class AffExpr:
 
     @classmethod
     def from_rust_variable(cls, variable: rs.Variable) -> AffExpr:
-        return AffExpr(linexpr=LinExpr.from_rust_variable(variable), constant=0.0)
-
-    @classmethod
-    def from_rust_linexpr(cls, linexpr: rs.LinExpr) -> AffExpr:
-        return AffExpr(linexpr=LinExpr.from_rust_linexpr(linexpr), constant=0.0)
+        return cls(linexpr=LinExpr.from_rust_variable(variable), constant=0.0)
 
     def to_rust_affexpr(self) -> rs.AffExpr:
         return self._affexpr
@@ -254,7 +221,7 @@ class AffExpr:
 
     @property
     def linexpr(self) -> LinExpr:
-        return LinExpr.from_rust_linexpr(self._affexpr.linexpr)
+        return LinExpr(linexpr=self._affexpr.pylinexpr)
 
     @property
     def constant(self) -> float:
@@ -302,20 +269,20 @@ class AffExpr:
         self, rhs: float | int | Variable | LinExpr | AffExpr
     ) -> Constraint:
         affexpr = self - rhs
-        return Constraint(
-            linexpr=affexpr.linexpr, constant=-affexpr.constant, is_equality=True
+        return Constraint.equality(
+            linexpr=affexpr.linexpr, b=affexpr.constant.__neg__()
         )
 
     def __le__(self, rhs: float | int | Variable | LinExpr | AffExpr) -> Constraint:
         affexpr = self - rhs
-        return Constraint(
-            linexpr=affexpr.linexpr, constant=-affexpr.constant, is_equality=False
+        return Constraint.less_than_eq(
+            linexpr=affexpr.linexpr, b=affexpr.constant.__neg__()
         )
 
     def __ge__(self, rhs: float | int | Variable | LinExpr | AffExpr) -> Constraint:
         affexpr = self - rhs
-        return Constraint(
-            linexpr=-affexpr.linexpr, constant=affexpr.constant, is_equality=False
+        return Constraint.greater_than_eq(
+            linexpr=affexpr.linexpr.__neg__(), b=affexpr.constant
         )
 
     def __neg__(self) -> AffExpr:
@@ -324,14 +291,23 @@ class AffExpr:
 
 class Constraint:
 
-    _constraint: rs.Constraint
+    _inequality: rs.PyInequality
 
-    def __init__(self, *, linexpr: LinExpr, constant: float, is_equality: bool) -> None:
-        self._constraint = rs.Constraint(
-            linexpr=linexpr.to_rust_linexpr(),
-            constant=constant,
-            is_equality=is_equality,
-        )
+    def __init__(self, *, inequality: rs.PyInequality) -> None:
+        self._inequality = inequality
 
-    def to_rust_constraint(self) -> rs.Constraint:
-        return self._constraint
+    @classmethod
+    def equality(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
+        slack = Variable.nonneg()
+        return cls(inequality=rs.PyInequality(linexpr=linexpr + slack, b=b))
+
+    @classmethod
+    def less_than_eq(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
+        return cls(inequality=rs.PyInequality(linexpr=linexpr, b=b))
+
+    @classmethod
+    def greater_than_eq(cls, *, linexpr: LinExpr, b: float | int) -> Constraint:
+        return cls(inequality=rs.PyInequality(linexpr=linexpr.__neg__(), b=b.__neg__()))
+
+    def to_rust_inequality(self) -> rs.PyInequality:
+        return self._inequality

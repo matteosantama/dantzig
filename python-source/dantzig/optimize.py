@@ -7,11 +7,11 @@ from dantzig.model import AffExpr, Constraint, LinExpr, Variable
 
 class Solution:
 
-    _solution: rs.Solution
+    _solution: rs.PySolution
     _sense: Literal["minimize", "maximize"]
 
     def __init__(
-        self, *, solution: rs.Solution, sense: Literal["minimize", "maximize"]
+        self, *, solution: rs.PySolution, sense: Literal["minimize", "maximize"]
     ) -> None:
         if sense not in ["minimize", "maximize"]:
             raise ValueError("'sense' must be one of ['minimize', 'maximize']")
@@ -21,9 +21,9 @@ class Solution:
     @property
     def objective_value(self) -> float:
         if self._sense == "minimize":
-            return cast(float, self._solution.objective_value)
-        if self._sense == "maximize":
             return cast(float, -self._solution.objective_value)
+        if self._sense == "maximize":
+            return cast(float, self._solution.objective_value)
         raise ValueError("'sense' must be one of ['minimize', 'maximize']")
 
     def __getitem__(self, variable: Variable) -> float:
@@ -69,8 +69,8 @@ class Minimize(Optimize):
         return "minimize"
 
     def solve(self) -> Solution:
-        objective = self.objective.to_rust_affexpr()
-        constraints = [c.to_rust_constraint() for c in self.constraints]
+        objective = self.objective.__neg__().to_rust_affexpr()
+        constraints = [c.to_rust_inequality() for c in self.constraints]
         return Solution(solution=rs.solve(objective, constraints), sense=self.sense)
 
 
@@ -80,6 +80,6 @@ class Maximize(Optimize):
         return "maximize"
 
     def solve(self) -> Solution:
-        objective = self.objective.__neg__().to_rust_affexpr()
-        constraints = [c.to_rust_constraint() for c in self.constraints]
+        objective = self.objective.to_rust_affexpr()
+        constraints = [c.to_rust_inequality() for c in self.constraints]
         return Solution(solution=rs.solve(objective, constraints), sense=self.sense)
