@@ -28,6 +28,10 @@ impl Variable {
     fn nonneg() -> Self {
         Self::new(Some(0.0), None)
     }
+
+    fn bounded(lb: f64, ub: f64) -> Self {
+        Self::new(Some(lb), Some(ub))
+    }
 }
 
 struct LinExpr {
@@ -552,12 +556,9 @@ fn find_second_pivot(
 
 /// Compute `x / y`, with `0 / 0 = 0`.
 fn safe_divide(x: f64, y: f64) -> f64 {
-    let result = if x == 0.0 && y == 0.0 { 0.0 } else { x / y };
-    assert!(
-        !result.is_infinite() && !result.is_nan(),
-        "safe divide {x} / {y}"
-    );
-    result
+    let div = if x == 0.0 && y == 0.0 { 0.0 } else { x / y };
+    assert!(!div.is_infinite() && !div.is_nan(), "safe divide {x} / {y}");
+    div
 }
 
 #[cfg(test)]
@@ -565,11 +566,14 @@ mod tests {
     use crate::simplex2::*;
 
     fn assert_approx_eq(result: f64, expected: f64) {
-        assert!((result - expected).abs() <= EPSILON)
+        assert!(
+            (result - expected).abs() <= EPSILON,
+            "result={result}, expected={expected}"
+        )
     }
 
     #[test]
-    fn test_1() {
+    fn test_nonneg_1() {
         let x = Variable::nonneg();
         let y = Variable::nonneg();
 
@@ -587,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn test_2() {
+    fn test_nonneg_2() {
         let x_1 = Variable::nonneg();
         let x_2 = Variable::nonneg();
         let x_3 = Variable::nonneg();
@@ -607,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn test_3() {
+    fn test_nonneg_3() {
         // LP relaxation of the problem on page C-10
         // http://web.tecnico.ulisboa.pt/mcasquilho/compute/_linpro/TaylorB_module_c.pdf
         let x_1 = Variable::nonneg();
@@ -646,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn test_4() {
+    fn test_nonneg_4() {
         let x_1 = Variable::nonneg();
         let x_2 = Variable::nonneg();
         let x_3 = Variable::nonneg();
@@ -666,7 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn test_5() {
+    fn test_nonneg_5() {
         let x = Variable::nonneg();
         let y = Variable::nonneg();
 
@@ -684,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn test_6() {
+    fn test_nonneg_6() {
         let x_1 = Variable::nonneg();
         let x_2 = Variable::nonneg();
         let x_3 = Variable::nonneg();
@@ -704,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn test_8() {
+    fn test_nonneg_8() {
         let x = Variable::nonneg();
         let y = Variable::nonneg();
 
@@ -722,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn test_9() {
+    fn test_nonneg_9() {
         let x_1 = Variable::nonneg();
         let x_2 = Variable::nonneg();
         let x_3 = Variable::nonneg();
@@ -750,6 +754,34 @@ mod tests {
         assert_approx_eq(result.solution(&x_4), 0.0);
         assert_approx_eq(result.solution(&x_5), 5.0);
         assert_approx_eq(result.solution(&x_6), 0.0);
+    }
+
+    #[test]
+    fn test_nonneg_no_constraints() {
+        let x = Variable::nonneg();
+
+        let objective = AffExpr::new(&[(-3.0, &x)], 2.0);
+        let constraints = vec![];
+
+        let result = Simplex::new(objective, constraints).solve().unwrap();
+
+        assert_approx_eq(result.objective_value(), 2.0);
+        assert_approx_eq(result.solution(&x), 0.0);
+    }
+
+    #[test]
+    fn test_variable_constraints() {
+        let x = Variable::bounded(-1.0, 1.0);
+        let y = Variable::bounded(-3.0, -1.0);
+
+        let objective = AffExpr::new(&[(1.0, &x), (-1.0, &y)], 5.0);
+        let constraints = vec![];
+
+        let result = Simplex::new(objective, constraints).solve().unwrap();
+
+        assert_approx_eq(result.objective_value(), 9.0);
+        assert_approx_eq(result.solution(&x), 1.0);
+        assert_approx_eq(result.solution(&y), -3.0);
     }
 
     #[test]
@@ -784,13 +816,27 @@ mod tests {
     }
 
     #[test]
+    fn test_unbounded_no_constraints() {
+        let x = Variable::nonneg();
+
+        let objective = AffExpr::new(&[(1.0, &x)], 10.0);
+        let constraints = vec![];
+
+        match Simplex::new(objective, constraints).solve().unwrap_err() {
+            Error::Unbounded => (),
+            Error::Infeasible => panic!("problem should be unbounded"),
+        }
+    }
+
+    #[test]
     fn test_infeasible_1() {
         let x = Variable::nonneg();
         let y = Variable::nonneg();
 
         let objective = AffExpr::new(&[(1.0, &x), (1.0, &y)], 0.0);
-        let c_1 = Inequality::new(&[(1.0, &x)], -0.5);
-        let constraints = vec![c_1];
+        let c_1 = Inequality::new(&[(1.0, &x)], -1.0);
+        let c_2 = Inequality::new(&[(5.0, &y)], 0.5);
+        let constraints = vec![c_1, c_2];
 
         match Simplex::new(objective, constraints).solve().unwrap_err() {
             Error::Unbounded => panic!("problem should be infeasible"),
@@ -800,21 +846,6 @@ mod tests {
 
     #[test]
     fn test_infeasible_2() {
-        let x = Variable::nonneg();
-        let y = Variable::nonneg();
-
-        let objective = AffExpr::new(&[(1.0, &x), (1.0, &y)], 0.0);
-        let c_1 = Inequality::new(&[(1.0, &x)], -2.0);
-        let constraints = vec![c_1];
-
-        match Simplex::new(objective, constraints).solve().unwrap_err() {
-            Error::Unbounded => panic!("problem should be infeasible"),
-            Error::Infeasible => (),
-        }
-    }
-
-    #[test]
-    fn test_infeasible_3() {
         let x = Variable::nonneg();
         let y = Variable::nonneg();
 
