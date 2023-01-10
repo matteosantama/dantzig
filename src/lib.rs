@@ -1,16 +1,13 @@
 mod error;
 mod linalg;
-mod linalg2;
 mod model;
-mod model2;
 mod pyobjs;
 mod simplex;
-mod simplex2;
 
 use crate::error::Error;
-use crate::model2::Inequality;
+use crate::model::Inequality;
 use crate::pyobjs::{PyAffExpr, PyInequality, PySolution, Variable};
-use crate::simplex2::Simplex;
+use crate::simplex::Simplex;
 use pyo3::prelude::*;
 
 pyo3::import_exception!(dantzig.exceptions, UnboundedError);

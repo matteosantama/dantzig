@@ -1,5 +1,5 @@
-use crate::model2::LinExpr;
-use crate::simplex2::Simplex;
+use crate::model::LinExpr;
+use crate::simplex::Simplex;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,6 +27,12 @@ impl Variable {
             lb,
             ub,
         }
+    }
+}
+
+impl Variable {
+    pub(crate) fn nonneg() -> Self {
+        Self::new(Some(0.0), None)
     }
 }
 

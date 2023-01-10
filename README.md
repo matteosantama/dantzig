@@ -27,7 +27,7 @@ Dantzig supports
 - Memory-efficient sparse matrix representations
 - Modern Python type-checking
 
-:warning: Dantzig is currently beta software. Please help us improve the library by reporting bugs through GitHub issues. 
+:warning: Dantzig is under active development. Please help us improve the library by reporting any issues!. 
 
 ### Installation
 
