@@ -22,10 +22,11 @@ Dantzig supports
 - Arbitrarily restricted variables, including completely unrestricted free variables
 - `==`, `<=`, and `>=` constraints
 - Both minimization and maximization problems
-- SIMD-accelerated linear algebra operations
+- Robust linear algebra operations, including a numerically stable LU factorization with partial pivoting
+- Memory-efficient sparse matrix representations
 - Modern Python type-checking
 
-Dantzig is currently beta software. Please help us improve the library by reporting bugs through GitHub issues. 
+:warning: Dantzig is currently beta software. Please help us improve the library by reporting bugs through GitHub issues. 
 
 ### Installation
 
@@ -83,8 +84,6 @@ soln = Min(x + y - z).st(x + y + z == 1)
 
 ### Road Map
 
-- [ ] Mixed integer linear programing
-- [ ] Built-in support for multidimensional variables and interoperability with `numpy`
-- [ ] More efficient matrix storage, ie. CSR format
-- [ ] Code profiling to identify and resolve performance bottlenecks
-- [ ] Support for alternate algorithms beyond simplex
+- [ ] Mixed integer linear programing (MILP)
+- [ ] SIMD-accelerated linear algebra operations
+- [ ] General optimizations to make the library competitive with `ortools`
