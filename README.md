@@ -19,7 +19,7 @@ and flexibility of a Python frontend plus the raw computing speed of a Rust back
 
 Dantzig supports
 
-- A parametric self-dual solver
+- A solver featuring a parametric self-dual algorithm
 - Arbitrarily restricted variables, including completely unrestricted free variables
 - `==`, `<=`, and `>=` constraints
 - Both minimization and maximization problems
