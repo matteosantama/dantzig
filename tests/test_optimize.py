@@ -47,31 +47,6 @@ def test_problem_4() -> None:
     assert solution[z] == 0.0
 
 
-# def test_problem_5() -> None:
-#     x_1 = dz.Var(lb=0.0, ub=1.0)
-#     x_2 = dz.Var(lb=0.0, ub=1.0)
-#     x_3 = dz.Var(lb=0.0, ub=1.0)
-#     x_4 = dz.Var(lb=0.0, ub=1.0)
-#
-#     objective = 300 * x_1 + 90 * x_2 + 400 * x_3 + 150 * x_4
-#     constraints = [
-#         # TODO: segfault
-#         #   35_000 * x_1 + 10_000 * x_2 + 25_000 * x_3 + 90_000 * x_4 <= 120_000,
-#         # TODO: unbounded
-#         35 * x_1 + 10 * x_2 + 25 * x_3 + 90 * x_4 <= 120,
-#         4 * x_1 + 2 * x_2 + 7 * x_3 + 3 * x_4 <= 12,
-#         x_1 + x_2 <= 1,
-#     ]
-#
-#     problem = dz.Max(objective).st(constraints)
-#     soln = problem.solve()
-#     assert soln.objective_value == 700.0
-#     assert soln[x_1] == 1.0
-#     assert soln[x_2] == 0.0
-#     assert soln[x_3] == 1.0
-#     assert soln[x_4] == 0.0
-
-
 def test_minimization_maximization_equivalence() -> None:
     x = dz.Var.nn()  # type: ignore[call-arg]
     y = dz.Var.nn()  # type: ignore[call-arg]
