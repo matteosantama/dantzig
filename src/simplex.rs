@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::error::Error;
 use crate::linalg::{lu_solve, CscMatrix, Matrix};
 use crate::model::{AffExpr, Inequality, LinExpr};
@@ -100,6 +99,7 @@ pub(crate) struct Simplex {
 
     // If `index_to_id[i] == k`, then variable `i` (identified by position) has ID `k`.
     // It should also always be the case that `id_to_index[index_to_id[k]] == k`.
+    #[allow(dead_code)]
     index_to_id: Vec<usize>,
     id_to_index: HashMap<usize, usize>,
 
