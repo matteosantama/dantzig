@@ -5,13 +5,14 @@
 <h1 align="center">Dantzig: A Rust-powered LP library for Python</h1>
 
 <p align="center">
+    <a href="https://pypi.org/project/dantzig/"><img alt="PyPI" src="https://img.shields.io/pypi/v/dantzig"></a>
     <a href="http://mypy-lang.org/"><img alt="Checked with mypy" src="http://www.mypy-lang.org/static/mypy_badge.svg"></a>
     <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
     <a href="https://pycqa.github.io/isort/"><img alt="Imports: isort" src="https://img.shields.io/badge/%20imports-isort-%231674b1?style=flat&labelColor=ef8336"></a>
     <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-success.svg"></a>
 </p>
 
-Dantzig is a lightweight and concise linear programming solver suitable for small 
+Dantzig is a **lightweight** and **concise** linear programming solver suitable for small 
 and large-scale problems alike.
 
 Dantzig is implemented in both Rust and Python, meaning you get the expressiveness 
@@ -27,7 +28,7 @@ Dantzig supports
 - Memory-efficient sparse matrix representations
 - Modern Python type-checking
 
-:warning: Dantzig is under active development. Please help us improve the library by reporting any issues!. 
+:warning: Dantzig is under active development. Please help us improve the library by reporting any issues!
 
 ### Installation
 
@@ -39,7 +40,7 @@ pip install dantzig
 
 ### Design Philosophies
 
-Dantzig prides itself on being both **lightweight** (zero-dependency) and **concise**.
+Dantzig prides itself on being both lightweight (zero-dependency) and concise.
 The API is designed to be extremely expressive and terse, saving you keystrokes without 
 sacrificing clarity. To this end, Dantzig provides several short aliases for common
 classes and methods.
@@ -88,3 +89,4 @@ soln = Min(x + y - z).st(x + y + z == 1)
 - [ ] Mixed integer linear programing (MILP)
 - [ ] SIMD-accelerated linear algebra operations
 - [ ] General optimizations to make the library competitive with `ortools`
+- [ ] Improved documentation
