@@ -48,6 +48,18 @@ class Optimize(abc.ABC):
         self.constraints = []
 
     def subject_to(self: T, constraints: Constraint | list[Constraint]) -> T:
+        """Add constraints to the problem.
+
+        Parameters
+        ----------
+        constraints
+            A single constraint, or a list of multiple constraints, to add to the model.
+
+        Returns
+        -------
+        T
+            An instance of ``self`` so you can chain calls to ``subject_to``.
+        """
         if isinstance(constraints, list):
             self.constraints.extend(constraints)
         elif isinstance(constraints, Constraint):
@@ -64,10 +76,37 @@ class Optimize(abc.ABC):
 
     @abc.abstractmethod
     def solve(self) -> Solution:
+        """Solve the problem."""
         raise NotImplementedError
 
 
 class Minimize(Optimize):
+    """
+    Model a minimization problem.
+
+    Parameters
+    ----------
+    objective : Variable | LinExpr | AffExpr
+        The objective function to be minimized.
+
+    Examples
+    --------
+    >>> import dantzig as dz
+    >>>
+    >>> x = dz.Variable(lb=1.0, ub=None)
+    >>> y = dz.Variable(lb=None, ub=2.0)
+    >>>
+    >>> result = dz.Minimize(x - 5 * y).solve()
+    >>> assert result[x] == 1.0
+    >>> assert result[y] == 2.0
+
+    Notes
+    -----
+    In general, a user will not have to worry about constructing a ``LinExpr``
+    or an ``AffExpr``. They will be constructed automatically through linear
+    operations on ``Variable`` objects.
+    """
+
     @property
     def sense(self) -> Literal["minimize", "maximize"]:
         return "minimize"
@@ -79,6 +118,32 @@ class Minimize(Optimize):
 
 
 class Maximize(Optimize):
+    """
+    Model a maximization problem.
+
+    Parameters
+    ----------
+    objective : Variable | LinExpr | AffExpr
+        The objective function to be maximized.
+
+    Examples
+    --------
+    >>> import dantzig as dz
+    >>>
+    >>> x = dz.Variable(lb=1.0, ub=None)
+    >>> y = dz.Variable(lb=None, ub=2.0)
+    >>>
+    >>> result = dz.Maximize(y - 5 * x).solve()
+    >>> assert result[x] == 1.0
+    >>> assert result[y] == 2.0
+
+    Notes
+    -----
+    In general, a user will not have to worry about constructing a ``LinExpr``
+    or an ``AffExpr``. They will be constructed automatically through linear
+    operations on ``Variable`` objects.
+    """
+
     @property
     def sense(self) -> Literal["minimize", "maximize"]:
         return "maximize"

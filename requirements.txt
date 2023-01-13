@@ -4,3 +4,4 @@ isort==5.11.4
 pytest==7.2.0
 mypy==0.991
 ruff==0.0.194
+sphinx==6.1.3

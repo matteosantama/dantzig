@@ -1,3 +1,4 @@
+# This is needed to allow `except dz.exceptions.UnboundedError`
 from dantzig import exceptions
 from dantzig.model import Variable
 from dantzig.optimize import Maximize, Minimize
