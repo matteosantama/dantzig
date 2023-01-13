@@ -6,9 +6,23 @@ import dantzig.rust as rs
 
 
 class Variable:
+    """
+    A variable to be optimized by the model.
 
-    _name: str | None
-    _variable: rs.Variable
+    A ``Variable`` is the fundamental building block of an optimization problem. You
+    can add variables together, and multiply them by constants (integers or floats).
+
+    Parameters
+    ----------
+    lb
+        The lower bound, inclusive, for the variable. Setting this value is equivalent
+        to adding the constraint ``x >= lb`` to the model.
+    ub
+        The upper bound, inclusive, for the variable. Setting this value is equivalent
+        to adding the constraint ``x <= lb`` to the model.
+    name
+        An optional identifier you can attach to the variable.
+    """
 
     def __init__(
         self, *, lb: int | float | None, ub: int | float | None, name: str | None = None
@@ -18,16 +32,58 @@ class Variable:
 
     @classmethod
     def free(cls, name: str | None = None) -> Variable:
+        """Initialize an unbounded variable.
+
+        This is equivalent to ``Variable(lb=None, ub=None, name=name)``.
+
+        Parameters
+        ----------
+        name
+            An optional identifier you can attach to the variable.
+
+        Returns
+        -------
+        Variable
+            A newly initialized free variable.
+        """
         return cls(lb=None, ub=None, name=name)
 
     @classmethod
     def nonneg(cls, name: str | None = None) -> Variable:
+        """Initialize a non-negative variable.
+
+        This is equivalent to ``Variable(lb=0.0, ub=None, name=name)``.
+
+        Parameters
+        ----------
+        name
+            An optional identifier you can attach to the variable.
+
+        Returns
+        -------
+        Variable
+            A newly initialized non-negative variable.
+        """
         return cls(lb=0.0, ub=None, name=name)
 
     nn = nonneg
 
     @classmethod
     def nonpos(cls, name: str | None = None) -> Variable:
+        """Initialize a non-positive variable.
+
+        This is equivalent to ``Variable(lb=None, ub=0.0, name=name)``.
+
+        Parameters
+        ----------
+        name
+            An optional identifier you can attach to the variable.
+
+        Returns
+        -------
+        Variable
+            A newly initialized non-positive variable.
+        """
         return cls(lb=None, ub=0.0, name=name)
 
     np = nonpos
@@ -119,9 +175,6 @@ class Variable:
 
 
 class LinExpr:
-
-    _linexpr: rs.PyLinExpr
-
     def __init__(self, *, linexpr: rs.PyLinExpr) -> None:
         self._linexpr = linexpr
 
@@ -129,7 +182,7 @@ class LinExpr:
     def from_rust_variable(cls, variable: rs.Variable) -> LinExpr:
         return cls(linexpr=rs.PyLinExpr(coefs=[1.0], vars=[variable]))
 
-    def to_rust_linexpr(self) -> rs.LinExpr:
+    def to_rust_linexpr(self) -> rs.PyLinExpr:
         return self._linexpr
 
     def to_affexpr(self) -> AffExpr:
@@ -206,9 +259,6 @@ class LinExpr:
 
 
 class AffExpr:
-
-    _affexpr: rs.AffExpr
-
     def __init__(self, *, linexpr: LinExpr, constant: int | float) -> None:
         self._affexpr = rs.PyAffExpr(
             linexpr=linexpr.to_rust_linexpr(), constant=constant
@@ -218,7 +268,7 @@ class AffExpr:
     def from_rust_variable(cls, variable: rs.Variable) -> AffExpr:
         return cls(linexpr=LinExpr.from_rust_variable(variable), constant=0.0)
 
-    def to_rust_affexpr(self) -> rs.AffExpr:
+    def to_rust_affexpr(self) -> rs.PyAffExpr:
         return self._affexpr
 
     def to_affexpr(self) -> AffExpr:
@@ -295,9 +345,6 @@ class AffExpr:
 
 
 class Constraint:
-
-    _inequalities: list[rs.PyInequality]
-
     def __init__(self, *, inequalities: list[rs.PyInequality]) -> None:
         self._inequalities = inequalities
 
