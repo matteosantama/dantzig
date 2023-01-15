@@ -5,6 +5,7 @@
 <h1 align="center">Dantzig: A Rust-powered LP library for Python</h1>
 
 <p align="center">
+    <a href="https://dantzig.readthedocs.io/en/latest/?badge=latest"><img src="https://readthedocs.org/projects/dantzig/badge/?version=latest" alt="Documentation Status"></a>
     <a href="https://pypi.org/project/dantzig/"><img alt="PyPI" src="https://img.shields.io/pypi/v/dantzig"></a>
     <a href="http://mypy-lang.org/"><img alt="Checked with mypy" src="http://www.mypy-lang.org/static/mypy_badge.svg"></a>
     <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
