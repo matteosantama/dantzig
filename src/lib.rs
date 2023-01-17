@@ -1,4 +1,5 @@
 mod error;
+mod io;
 mod linalg;
 mod model;
 mod pyobjs;
