@@ -1,8 +1,10 @@
 use std::cmp::{min, Ordering};
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io::Lines;
 use std::io::{BufRead, BufReader, Read};
 use std::iter::Peekable;
+use std::ops::Index;
 use std::path::Path;
 
 /// Refer to http://users.clas.ufl.edu/hager/coap/mps_format for details.
@@ -12,6 +14,19 @@ struct MPS {
     columns: Columns,
     rhs: RHS,
     bounds: Bounds,
+}
+
+struct Solution {
+    objective_value: f64,
+    variables: HashMap<String, f64>,
+}
+
+impl Index<&str> for Solution {
+    type Output = f64;
+
+    fn index(&self, index: &str) -> &Self::Output {
+        &self.variables[index]
+    }
 }
 
 struct Rows {
@@ -69,20 +84,37 @@ impl RHS {
 }
 
 enum Bound {
-    LO,
-    UP,
+    LO(f64),
+    UP(f64),
     FR,
-    FX,
+    FX(f64),
 }
 
-struct Bounds {}
+struct Bounds {
+    // COLUMN_NAME -> BOUND_NAME -> BOUND
+    data: HashMap<String, HashMap<String, Vec<Bound>>>,
+}
 
 impl Bounds {
     fn new() -> Self {
-        Self {}
+        Self {
+            data: HashMap::new(),
+        }
     }
 
-    fn store(&mut self, bound_type: Bound, bound_name: String, column_name: String, value: f64) {}
+    fn store(&mut self, bound_type: Bound, bound_name: String, column_name: String) {
+        match self.data.entry(column_name) {
+            Entry::Occupied(mut column_entry) => match column_entry.get_mut().entry(bound_name) {
+                Entry::Occupied(mut bound_entry) => bound_entry.get_mut().push(bound_type),
+                Entry::Vacant(bound_entry) => {
+                    bound_entry.insert(vec![bound_type]);
+                }
+            },
+            Entry::Vacant(column_entry) => {
+                column_entry.insert(HashMap::from([(bound_name, vec![bound_type])]));
+            }
+        }
+    }
 }
 
 fn read_rows_section<B: BufRead>(rows: &mut Rows, lines: &mut Peekable<Lines<B>>) {
@@ -159,18 +191,19 @@ fn read_bounds_section<B: BufRead>(bounds: &mut Bounds, lines: &mut Peekable<Lin
 
         let line = lines.next().unwrap().unwrap();
 
+        let bound = || line[24..36].trim().parse::<f64>().unwrap();
+
         let bound_type = match &line[1..3] {
-            "LO" => Bound::LO,
-            "UP" => Bound::UP,
+            "LO" => Bound::LO(bound()),
+            "UP" => Bound::UP(bound()),
             "FR" => Bound::FR,
-            "FX" => Bound::FX,
+            "FX" => Bound::FX(bound()),
             _ => unimplemented!("{} is not supported", &line[1..3]),
         };
         let bound_name = line[4..12].to_string();
         let column_name = line[14..22].to_string();
-        let value = line[24..36].trim().parse::<f64>().unwrap();
 
-        bounds.store(bound_type, bound_name, column_name, value);
+        bounds.store(bound_type, bound_name, column_name);
     }
 }
 
@@ -183,6 +216,10 @@ impl MPS {
             rhs,
             bounds,
         }
+    }
+
+    fn solve(self) -> Solution {
+        todo!()
     }
 
     pub fn read<R: Read>(src: R) -> Self {
@@ -224,7 +261,7 @@ impl MPS {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::MPS;
+    use super::MPS;
 
     #[test]
     fn test_read() {
@@ -251,6 +288,10 @@ BOUNDS
  UP BND1      YTWO                 1
 ENDATA
 "#;
-        let mps = MPS::read(raw.as_bytes());
+        let solution = MPS::read(raw.as_bytes()).solve();
+        assert_eq!(solution.objective_value, 54.0);
+        assert_eq!(solution["XONE"], 4.0);
+        assert_eq!(solution["YTWO"], -1.0);
+        assert_eq!(solution["ZTHREE"], 6.0);
     }
 }
