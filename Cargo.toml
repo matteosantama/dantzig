@@ -7,7 +7,7 @@ edition = "2021"
 name = "dantzig.rust"
 
 [dependencies]
-pyo3 = { version = "0.17.3", features = ["extension-module", "abi3-py310"] }
+pyo3 = { version = "0.18.0", features = ["extension-module", "abi3-py310"] }
 
 [lib]
 name = "rust"
