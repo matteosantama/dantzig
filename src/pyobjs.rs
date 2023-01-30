@@ -21,7 +21,7 @@ pub(crate) struct Variable {
 #[pymethods]
 impl Variable {
     #[new]
-    #[args("*", lb, ub)]
+    #[pyo3(signature = (*, lb, ub))]
     pub(crate) fn new(lb: Option<f64>, ub: Option<f64>) -> Self {
         Self {
             id: COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -123,7 +123,7 @@ pub(crate) struct PyAffExpr {
 #[pymethods]
 impl PyAffExpr {
     #[new]
-    #[args("*", linexpr, constant)]
+    #[pyo3(signature = (*, linexpr, constant))]
     fn new(linexpr: PyLinExpr, constant: f64) -> Self {
         Self {
             pylinexpr: linexpr,
@@ -142,7 +142,7 @@ pub(crate) struct PyInequality {
 #[pymethods]
 impl PyInequality {
     #[new]
-    #[args("*", linexpr, b)]
+    #[pyo3(signature = (*, linexpr, b))]
     fn new(linexpr: PyLinExpr, b: f64) -> Self {
         Self {
             pylinexpr: linexpr,
