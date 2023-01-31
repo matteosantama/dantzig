@@ -35,6 +35,10 @@ impl Variable {
     pub(crate) fn nonneg() -> Self {
         Self::new(Some(0.0), None)
     }
+
+    pub(crate) fn free() -> Self {
+        Self::new(None, None)
+    }
 }
 
 #[pyclass(module = "dantzig.rust")]

@@ -114,6 +114,7 @@ impl RHS {
     }
 }
 
+#[derive(Debug)]
 enum Bound {
     LO(f64),
     UP(f64),
@@ -122,8 +123,7 @@ enum Bound {
 }
 
 struct Bounds {
-    // COLUMN_NAME -> BOUND_NAME -> BOUND
-    data: HashMap<String, HashMap<String, Vec<Bound>>>,
+    data: HashMap<String, Vec<Bound>>,
 }
 
 impl Bounds {
@@ -133,18 +133,15 @@ impl Bounds {
         }
     }
 
-    fn store(&mut self, bound_type: Bound, bound_name: String, column_name: String) {
-        match self.data.entry(column_name) {
-            Entry::Occupied(mut column_entry) => match column_entry.get_mut().entry(bound_name) {
-                Entry::Occupied(mut bound_entry) => bound_entry.get_mut().push(bound_type),
-                Entry::Vacant(bound_entry) => {
-                    bound_entry.insert(vec![bound_type]);
-                }
-            },
-            Entry::Vacant(column_entry) => {
-                column_entry.insert(HashMap::from([(bound_name, vec![bound_type])]));
-            }
-        }
+    fn store(&mut self, bound_type: Bound, column_name: String) {
+        self.data
+            .entry(column_name)
+            .or_insert(vec![])
+            .push(bound_type)
+    }
+
+    fn fetch(&self, column: &str) -> Option<&Vec<Bound>> {
+        self.data.get(column)
     }
 }
 
@@ -175,15 +172,15 @@ fn read_columns_section<B: BufRead>(columns: &mut Columns, lines: &mut Peekable<
         }
 
         let line = lines.next().unwrap().unwrap();
-        let column_name = line[4..12].to_string();
-        let row_name = line[14..22].to_string();
+        let column_name = line[4..12].trim().to_string();
+        let row_name = line[14..22].trim().to_string();
         let value = line[24..36].trim().parse::<f64>().unwrap();
 
         columns.store(column_name, row_name, value);
 
         if line.len() > 40 {
-            let column_name = line[4..12].to_string();
-            let row_name = line[39..47].to_string();
+            let column_name = line[4..12].trim().to_string();
+            let row_name = line[39..47].trim().to_string();
             let value = line[49..61].trim().parse::<f64>().unwrap();
 
             columns.store(column_name, row_name, value);
@@ -198,15 +195,15 @@ fn read_rhs_section<B: BufRead>(rhs: &mut RHS, lines: &mut Peekable<Lines<B>>) {
         }
 
         let line = lines.next().unwrap().unwrap();
-        let rhs_name = line[4..12].to_string();
-        let row_name = line[14..22].to_string();
+        let rhs_name = line[4..12].trim().to_string();
+        let row_name = line[14..22].trim().to_string();
         let value = line[24..36].trim().parse::<f64>().unwrap();
 
         rhs.store(rhs_name, row_name, value);
 
         if line.len() > 40 {
-            let rhs_name = line[4..12].to_string();
-            let row_name = line[39..47].to_string();
+            let rhs_name = line[4..12].trim().to_string();
+            let row_name = line[39..47].trim().to_string();
             let value = line[59..61].trim().parse::<f64>().unwrap();
 
             rhs.store(rhs_name, row_name, value);
@@ -231,10 +228,9 @@ fn read_bounds_section<B: BufRead>(bounds: &mut Bounds, lines: &mut Peekable<Lin
             "FX" => Bound::FX(bound()),
             _ => unimplemented!("{} is not supported", &line[1..3]),
         };
-        let bound_name = line[4..12].to_string();
-        let column_name = line[14..22].to_string();
+        let column_name = line[14..22].trim().to_string();
 
-        bounds.store(bound_type, bound_name, column_name);
+        bounds.store(bound_type, column_name);
     }
 }
 
@@ -249,8 +245,55 @@ impl MPS {
         }
     }
 
+    /// Create a map of variable *names* to variable *objects*.
+    ///
+    /// Note that multiple bounds are allowed for a single variable, but
+    /// the most restrictive will be used (the lowest upper bound, for example).
+    /// If no bounds are provided, the variable is assumed to be free.
     fn initialize_variables(&self) -> HashMap<String, Variable> {
-        todo!()
+        self.columns
+            .data
+            .keys()
+            .map(|column| {
+                let variable = match self.bounds.fetch(column) {
+                    None => Variable::free(),
+                    Some(bounds) => {
+                        let mut lb = None;
+                        let mut ub = None;
+
+                        let mut set_lb = |x| {
+                            let bound = match lb {
+                                None => x,
+                                Some(z) => f64::max(z, x),
+                            };
+                            lb = Some(bound)
+                        };
+
+                        let mut set_ub = |x| {
+                            let bound = match ub {
+                                None => x,
+                                Some(z) => f64::min(z, x),
+                            };
+                            ub = Some(bound)
+                        };
+
+                        for bound in bounds {
+                            match bound {
+                                Bound::LO(x) => set_lb(*x),
+                                Bound::UP(x) => set_ub(*x),
+                                Bound::FR => {}
+                                Bound::FX(x) => {
+                                    set_lb(*x);
+                                    set_ub(*x);
+                                }
+                            }
+                        }
+                        Variable::new(lb, ub)
+                    }
+                };
+                (column.to_owned(), variable)
+            })
+            .collect()
     }
 
     fn initialize_objective(&self, variables: &HashMap<String, Variable>) -> AffExpr {
