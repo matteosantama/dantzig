@@ -402,11 +402,17 @@ impl MPS {
 #[cfg(test)]
 mod tests {
     use super::MPS;
+    use std::env;
+    use std::path::Path;
 
     #[test]
     fn test_mps_read() {
-        let path = "/Users/matteosantamaria/dantzig/assets/MPS/simple.mps";
+        let dir =
+            env::var("MPS").expect("MPS environment variable should be set by .cargo/config.toml");
+        let path = Path::new(&dir).join("simple.mps");
+
         let solution = MPS::read(path).unwrap().solve().unwrap();
+
         assert_eq!(solution.objective_value, 80.0);
         assert_eq!(solution["XONE"], 4.0);
         assert_eq!(solution["YTWO"], 1.0);
