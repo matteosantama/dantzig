@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::error::Error;
 use crate::model::{AffExpr, Inequality, LinExpr};
 use crate::pyobjs::Variable;
@@ -15,6 +16,7 @@ use std::ops::Index;
 use std::path::Path;
 
 /// Refer to http://users.clas.ufl.edu/hager/coap/mps_format for details.
+#[allow(clippy::upper_case_acronyms)]
 struct MPS {
     name: String,
     rows: Rows,
@@ -104,6 +106,7 @@ impl Columns {
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 struct RHS {
     data: HashMap<String, f64>,
 }
