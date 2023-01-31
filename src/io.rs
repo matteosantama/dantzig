@@ -6,8 +6,10 @@ use std::cmp::{min, Ordering};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::fs::File;
+use std::io;
 use std::io::Lines;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::iter::Peekable;
 use std::ops::Index;
 use std::path::Path;
@@ -318,7 +320,7 @@ impl MPS {
     ) -> Vec<Inequality> {
         let mut constraints = Vec::with_capacity(self.rows.equations.len());
         for (row, ordering) in &self.rows.equations {
-            let linexpr = self.linexpr(&row, variables, order);
+            let linexpr = self.linexpr(row, variables, order);
             let rhs = self.rhs.fetch(row);
             match ordering {
                 Ordering::Less => constraints.push(Inequality::less_than_eq(linexpr, rhs)),
@@ -359,8 +361,9 @@ impl MPS {
             .map(|simplex| Solution::new(simplex, variables))
     }
 
-    pub fn read<R: Read>(src: R) -> Self {
-        let reader = BufReader::new(src);
+    pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
 
         let mut lines = reader.lines().peekable();
 
@@ -378,7 +381,7 @@ impl MPS {
                         "COLUMNS" => read_columns_section(&mut columns, &mut lines),
                         "RHS" => read_rhs_section(&mut rhs, &mut lines),
                         "BOUNDS" => read_bounds_section(&mut bounds, &mut lines),
-                        "ENDATA" => return Self::new(name, rows, columns, rhs, bounds),
+                        "ENDATA" => return Ok(Self::new(name, rows, columns, rhs, bounds)),
                         _ if line.starts_with("NAME") => {
                             let end = min(line.len(), 25);
                             name = line[15..end].to_string()
@@ -391,9 +394,9 @@ impl MPS {
         panic!("no ENDATA section encountered");
     }
 
-    fn write<P: AsRef<Path>>(&self) {
-        todo!()
-    }
+    // fn write<P: AsRef<Path>>(&self, path: P) {
+    //     todo!()
+    // }
 }
 
 #[cfg(test)]
@@ -402,30 +405,8 @@ mod tests {
 
     #[test]
     fn test_mps_read() {
-        let raw = r#"
-NAME          TESTPROB
-ROWS
- N  COST
- L  LIM1
- G  LIM2
- E  MYEQN
-COLUMNS
-    XONE      COST                 1   LIM1                 1
-    XONE      LIM2                 1
-    YTWO      COST                 4   LIM1                 1
-    YTWO      MYEQN               -1
-    ZTHREE    COST                 9   LIM2                 1
-    ZTHREE    MYEQN                1
-RHS
-    RHS1      LIM1                 5   LIM2                10
-    RHS1      MYEQN                7
-BOUNDS
- UP BND1      XONE                 4
- LO BND1      YTWO                -1
- UP BND1      YTWO                 1
-ENDATA
-"#;
-        let solution = MPS::read(raw.as_bytes()).solve().unwrap();
+        let path = "/Users/matteosantamaria/dantzig/assets/MPS/simple.mps";
+        let solution = MPS::read(path).unwrap().solve().unwrap();
         assert_eq!(solution.objective_value, 80.0);
         assert_eq!(solution["XONE"], 4.0);
         assert_eq!(solution["YTWO"], 1.0);
