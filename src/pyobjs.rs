@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[pyclass(module = "dantzig.rust")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Variable {
     #[pyo3(get)]
     pub(crate) id: usize,

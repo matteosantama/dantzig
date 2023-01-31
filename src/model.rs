@@ -2,7 +2,7 @@ use crate::pyobjs::{PyAffExpr, PyInequality, PyLinExpr, Variable};
 use std::collections::HashMap;
 use std::ops::Neg;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct LinExpr {
     pub(crate) coefs: Vec<f64>,
     pub(crate) vars: Vec<Variable>,
@@ -51,6 +51,7 @@ impl From<PyLinExpr> for LinExpr {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct AffExpr {
     linexpr: LinExpr,
     constant: f64,
@@ -102,6 +103,7 @@ impl From<LinExpr> for AffExpr {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Inequality {
     pub(crate) linexpr: LinExpr,
     pub(crate) b: f64,

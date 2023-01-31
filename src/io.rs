@@ -4,7 +4,7 @@ use crate::pyobjs::Variable;
 use crate::simplex::Simplex;
 use std::cmp::{min, Ordering};
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io::Lines;
 use std::io::{BufRead, BufReader, Read};
@@ -71,27 +71,30 @@ impl Rows {
 struct Columns {
     // ROW_NAME -> COLUMN_NAME -> VALUE
     data: HashMap<String, HashMap<String, f64>>,
+    columns: HashSet<String>,
 }
 
 impl Columns {
     fn new() -> Self {
         Self {
             data: HashMap::new(),
+            columns: HashSet::new(),
         }
     }
 
-    fn store(&mut self, column_name: String, row_name: String, value: f64) {
-        match self.data.entry(row_name) {
-            Entry::Occupied(mut row_entry) => match row_entry.get_mut().entry(column_name) {
+    fn store(&mut self, column: String, row: String, value: f64) {
+        match self.data.entry(row) {
+            Entry::Occupied(mut row_entry) => match row_entry.get_mut().entry(column.clone()) {
                 Entry::Occupied(_) => panic!("duplicate coefficient specification detected"),
                 Entry::Vacant(column_entry) => {
                     column_entry.insert(value);
                 }
             },
             Entry::Vacant(row_entry) => {
-                row_entry.insert(HashMap::from([(column_name, value)]));
+                row_entry.insert(HashMap::from([(column.clone(), value)]));
             }
         }
+        self.columns.insert(column);
     }
 
     fn fetch(&self, column: &str, row: &str) -> f64 {
@@ -255,8 +258,8 @@ impl MPS {
     /// If no bounds are provided, the variable is assumed to be free.
     fn initialize_variables(&self) -> HashMap<String, Variable> {
         self.columns
-            .data
-            .keys()
+            .columns
+            .iter()
             .map(|column| {
                 let variable = match self.bounds.fetch(column) {
                     None => Variable::free(),
@@ -423,9 +426,9 @@ BOUNDS
 ENDATA
 "#;
         let solution = MPS::read(raw.as_bytes()).solve().unwrap();
-        assert_eq!(solution.objective_value, 54.0);
+        assert_eq!(solution.objective_value, 80.0);
         assert_eq!(solution["XONE"], 4.0);
-        assert_eq!(solution["YTWO"], -1.0);
-        assert_eq!(solution["ZTHREE"], 6.0);
+        assert_eq!(solution["YTWO"], 1.0);
+        assert_eq!(solution["ZTHREE"], 8.0);
     }
 }
