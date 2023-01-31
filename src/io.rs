@@ -1,6 +1,11 @@
+use crate::error::Error;
+use crate::model::{AffExpr, Inequality};
+use crate::pyobjs::Variable;
+use crate::simplex::Simplex;
 use std::cmp::{min, Ordering};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::io::Lines;
 use std::io::{BufRead, BufReader, Read};
 use std::iter::Peekable;
@@ -19,6 +24,18 @@ struct MPS {
 struct Solution {
     objective_value: f64,
     variables: HashMap<String, f64>,
+}
+
+impl Solution {
+    fn new(simplex: Simplex, variables: HashMap<String, Variable>) -> Self {
+        Self {
+            objective_value: simplex.objective_value(),
+            variables: variables
+                .into_iter()
+                .map(|(name, variable)| (name, simplex.solution()[&variable.id]))
+                .collect(),
+        }
+    }
 }
 
 impl Index<&str> for Solution {
@@ -52,7 +69,8 @@ impl Rows {
 }
 
 struct Columns {
-    data: HashMap<(String, String), f64>,
+    // COLUMN_NAME -> ROW_NAME -> VALUE
+    data: HashMap<String, HashMap<String, f64>>,
 }
 
 impl Columns {
@@ -63,7 +81,20 @@ impl Columns {
     }
 
     fn store(&mut self, column_name: String, row_name: String, value: f64) {
-        self.data.insert((row_name, column_name), value);
+        match self.data.entry(column_name) {
+            Entry::Occupied(mut column_entry) => match column_entry.get_mut().entry(row_name) {
+                Entry::Occupied(row_entry) => panic!(
+                    "duplicate coefficient specification in row {}",
+                    row_entry.key()
+                ),
+                Entry::Vacant(row_entry) => {
+                    row_entry.insert(value);
+                }
+            },
+            Entry::Vacant(column_entry) => {
+                column_entry.insert(HashMap::from([(row_name, value)]));
+            }
+        }
     }
 }
 
@@ -218,8 +249,25 @@ impl MPS {
         }
     }
 
-    fn solve(self) -> Solution {
+    fn initialize_variables(&self) -> HashMap<String, Variable> {
         todo!()
+    }
+
+    fn initialize_objective(&self, variables: &HashMap<String, Variable>) -> AffExpr {
+        todo!()
+    }
+
+    fn initialize_constraints(&self, variables: &HashMap<String, Variable>) -> Vec<Inequality> {
+        todo!()
+    }
+
+    fn solve(self) -> Result<Solution, Error> {
+        let variables = self.initialize_variables();
+        let objective = self.initialize_objective(&variables);
+        let constraints = self.initialize_constraints(&variables);
+        Simplex::new(objective, constraints)
+            .solve()
+            .map(|simplex| Solution::new(simplex, variables))
     }
 
     pub fn read<R: Read>(src: R) -> Self {
@@ -264,7 +312,7 @@ mod tests {
     use super::MPS;
 
     #[test]
-    fn test_read() {
+    fn test_mps_read() {
         let raw = r#"
 NAME          TESTPROB
 ROWS
@@ -288,7 +336,7 @@ BOUNDS
  UP BND1      YTWO                 1
 ENDATA
 "#;
-        let solution = MPS::read(raw.as_bytes()).solve();
+        let solution = MPS::read(raw.as_bytes()).solve().unwrap();
         assert_eq!(solution.objective_value, 54.0);
         assert_eq!(solution["XONE"], 4.0);
         assert_eq!(solution["YTWO"], -1.0);
