@@ -96,6 +96,10 @@ impl Columns {
             }
         }
     }
+
+    fn fetch(&self, column_name: &str, row_name: &str) -> f64 {
+        todo!()
+    }
 }
 
 struct RHS {
@@ -134,10 +138,7 @@ impl Bounds {
     }
 
     fn store(&mut self, bound_type: Bound, column_name: String) {
-        self.data
-            .entry(column_name)
-            .or_insert(vec![])
-            .push(bound_type)
+        self.data.entry(column_name).or_default().push(bound_type)
     }
 
     fn fetch(&self, column: &str) -> Option<&Vec<Bound>> {
@@ -296,18 +297,36 @@ impl MPS {
             .collect()
     }
 
-    fn initialize_objective(&self, variables: &HashMap<String, Variable>) -> AffExpr {
-        todo!()
+    fn initialize_objective(
+        &self,
+        variables: &HashMap<String, Variable>,
+        order: &[&String],
+    ) -> AffExpr {
+        let objective = &self.rows.objective;
+        let linexpr = order
+            .iter()
+            .map(|name| {
+                let variable = variables.get(*name).expect("missing variable {name}");
+                let coef = self.columns.fetch(objective, name);
+                (coef, variable)
+            })
+            .collect::<Vec<_>>();
+        AffExpr::new(&linexpr, 0.0)
     }
 
-    fn initialize_constraints(&self, variables: &HashMap<String, Variable>) -> Vec<Inequality> {
+    fn initialize_constraints(
+        &self,
+        variables: &HashMap<String, Variable>,
+        order: &[&String],
+    ) -> Vec<Inequality> {
         todo!()
     }
 
     fn solve(self) -> Result<Solution, Error> {
         let variables = self.initialize_variables();
-        let objective = self.initialize_objective(&variables);
-        let constraints = self.initialize_constraints(&variables);
+        let order = variables.keys().collect::<Vec<_>>();
+        let objective = self.initialize_objective(&variables, &order);
+        let constraints = self.initialize_constraints(&variables, &order);
         Simplex::new(objective, constraints)
             .solve()
             .map(|simplex| Solution::new(simplex, variables))

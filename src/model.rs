@@ -56,7 +56,6 @@ pub(crate) struct AffExpr {
 }
 
 impl AffExpr {
-    #[cfg(test)]
     pub(crate) fn new(linexpr: &[(f64, &Variable)], constant: f64) -> Self {
         Self {
             linexpr: LinExpr::from(linexpr),
