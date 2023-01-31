@@ -1,5 +1,6 @@
 use crate::pyobjs::{PyAffExpr, PyInequality, PyLinExpr, Variable};
 use std::collections::HashMap;
+use std::ops::Neg;
 
 #[derive(Clone)]
 pub(crate) struct LinExpr {
@@ -92,6 +93,15 @@ impl From<PyAffExpr> for AffExpr {
     }
 }
 
+impl From<LinExpr> for AffExpr {
+    fn from(linexpr: LinExpr) -> Self {
+        Self {
+            linexpr,
+            constant: 0.0,
+        }
+    }
+}
+
 pub(crate) struct Inequality {
     pub(crate) linexpr: LinExpr,
     pub(crate) b: f64,
@@ -102,6 +112,17 @@ impl Inequality {
         Self {
             linexpr: LinExpr::from(linexpr),
             b,
+        }
+    }
+
+    pub(crate) fn less_than_eq(linexpr: LinExpr, b: f64) -> Self {
+        Self { linexpr, b }
+    }
+
+    pub(crate) fn greater_than_eq(linexpr: LinExpr, b: f64) -> Self {
+        Self {
+            linexpr: linexpr.__neg__(),
+            b: b.neg(),
         }
     }
 

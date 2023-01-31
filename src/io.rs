@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::model::{AffExpr, Inequality};
+use crate::model::{AffExpr, Inequality, LinExpr};
 use crate::pyobjs::Variable;
 use crate::simplex::Simplex;
 use std::cmp::{min, Ordering};
@@ -69,7 +69,7 @@ impl Rows {
 }
 
 struct Columns {
-    // COLUMN_NAME -> ROW_NAME -> VALUE
+    // ROW_NAME -> COLUMN_NAME -> VALUE
     data: HashMap<String, HashMap<String, f64>>,
 }
 
@@ -81,29 +81,26 @@ impl Columns {
     }
 
     fn store(&mut self, column_name: String, row_name: String, value: f64) {
-        match self.data.entry(column_name) {
-            Entry::Occupied(mut column_entry) => match column_entry.get_mut().entry(row_name) {
-                Entry::Occupied(row_entry) => panic!(
-                    "duplicate coefficient specification in row {}",
-                    row_entry.key()
-                ),
-                Entry::Vacant(row_entry) => {
-                    row_entry.insert(value);
+        match self.data.entry(row_name) {
+            Entry::Occupied(mut row_entry) => match row_entry.get_mut().entry(column_name) {
+                Entry::Occupied(_) => panic!("duplicate coefficient specification detected"),
+                Entry::Vacant(column_entry) => {
+                    column_entry.insert(value);
                 }
             },
-            Entry::Vacant(column_entry) => {
-                column_entry.insert(HashMap::from([(row_name, value)]));
+            Entry::Vacant(row_entry) => {
+                row_entry.insert(HashMap::from([(column_name, value)]));
             }
         }
     }
 
-    fn fetch(&self, column_name: &str, row_name: &str) -> f64 {
-        todo!()
+    fn fetch(&self, column: &str, row: &str) -> f64 {
+        self.data[row].get(column).cloned().unwrap_or_default()
     }
 }
 
 struct RHS {
-    data: HashMap<(String, String), f64>,
+    data: HashMap<String, f64>,
 }
 
 impl RHS {
@@ -113,8 +110,15 @@ impl RHS {
         }
     }
 
-    fn store(&mut self, rhs_name: String, row_name: String, value: f64) {
-        self.data.insert((rhs_name, row_name), value);
+    fn store(&mut self, row: String, value: f64) {
+        match self.data.entry(row) {
+            Entry::Occupied(_) => panic!("duplicate RHS specifications"),
+            Entry::Vacant(entry) => entry.insert(value),
+        };
+    }
+
+    fn fetch(&self, row: &str) -> f64 {
+        self.data[row]
     }
 }
 
@@ -196,18 +200,16 @@ fn read_rhs_section<B: BufRead>(rhs: &mut RHS, lines: &mut Peekable<Lines<B>>) {
         }
 
         let line = lines.next().unwrap().unwrap();
-        let rhs_name = line[4..12].trim().to_string();
-        let row_name = line[14..22].trim().to_string();
+        let row = line[14..22].trim().to_string();
         let value = line[24..36].trim().parse::<f64>().unwrap();
 
-        rhs.store(rhs_name, row_name, value);
+        rhs.store(row, value);
 
         if line.len() > 40 {
-            let rhs_name = line[4..12].trim().to_string();
-            let row_name = line[39..47].trim().to_string();
+            let row = line[39..47].trim().to_string();
             let value = line[59..61].trim().parse::<f64>().unwrap();
 
-            rhs.store(rhs_name, row_name, value);
+            rhs.store(row, value);
         }
     }
 }
@@ -302,16 +304,8 @@ impl MPS {
         variables: &HashMap<String, Variable>,
         order: &[&String],
     ) -> AffExpr {
-        let objective = &self.rows.objective;
-        let linexpr = order
-            .iter()
-            .map(|name| {
-                let variable = variables.get(*name).expect("missing variable {name}");
-                let coef = self.columns.fetch(objective, name);
-                (coef, variable)
-            })
-            .collect::<Vec<_>>();
-        AffExpr::new(&linexpr, 0.0)
+        let linexpr = self.linexpr(&self.rows.objective, variables, order);
+        AffExpr::from(linexpr)
     }
 
     fn initialize_constraints(
@@ -319,7 +313,37 @@ impl MPS {
         variables: &HashMap<String, Variable>,
         order: &[&String],
     ) -> Vec<Inequality> {
-        todo!()
+        let mut constraints = Vec::with_capacity(self.rows.equations.len());
+        for (row, ordering) in &self.rows.equations {
+            let linexpr = self.linexpr(&row, variables, order);
+            let rhs = self.rhs.fetch(row);
+            match ordering {
+                Ordering::Less => constraints.push(Inequality::less_than_eq(linexpr, rhs)),
+                Ordering::Equal => {
+                    constraints.push(Inequality::less_than_eq(linexpr.clone(), rhs));
+                    constraints.push(Inequality::greater_than_eq(linexpr, rhs));
+                }
+                Ordering::Greater => constraints.push(Inequality::greater_than_eq(linexpr, rhs)),
+            }
+        }
+        constraints
+    }
+
+    fn linexpr(
+        &self,
+        row: &str,
+        variables: &HashMap<String, Variable>,
+        order: &[&String],
+    ) -> LinExpr {
+        let terms = order
+            .iter()
+            .map(|column| {
+                let variable = variables.get(*column).unwrap();
+                let coef = self.columns.fetch(column, row);
+                (coef, variable)
+            })
+            .collect::<Vec<_>>();
+        LinExpr::from(terms.as_slice())
     }
 
     fn solve(self) -> Result<Solution, Error> {
