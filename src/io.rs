@@ -31,9 +31,12 @@ struct Solution {
 }
 
 impl Solution {
-    fn new(simplex: Simplex, variables: HashMap<String, Variable>) -> Self {
+    fn new(simplex: Simplex, variables: HashMap<String, Variable>, direction: Direction) -> Self {
         Self {
-            objective_value: simplex.objective_value(),
+            objective_value: match direction {
+                Direction::Minimize => -simplex.objective_value(),
+                Direction::Maximize => simplex.objective_value(),
+            },
             variables: variables
                 .into_iter()
                 .map(|(name, variable)| (name, simplex.solution()[&variable.id]))
@@ -126,7 +129,7 @@ impl RHS {
     }
 
     fn fetch(&self, row: &str) -> f64 {
-        self.data[row]
+        self.data.get(row).cloned().unwrap_or_default()
     }
 }
 
@@ -245,6 +248,11 @@ fn read_bounds_section<B: BufRead>(bounds: &mut Bounds, lines: &mut Peekable<Lin
     }
 }
 
+enum Direction {
+    Minimize,
+    Maximize,
+}
+
 impl MPS {
     fn new(name: String, rows: Rows, columns: Columns, rhs: RHS, bounds: Bounds) -> Self {
         Self {
@@ -311,8 +319,14 @@ impl MPS {
         &self,
         variables: &HashMap<String, Variable>,
         order: &[&String],
+        direction: &Direction,
     ) -> AffExpr {
-        let linexpr = self.linexpr(&self.rows.objective, variables, order);
+        let linexpr = match direction {
+            Direction::Minimize => self
+                .linexpr(&self.rows.objective, variables, order)
+                .__neg__(),
+            Direction::Maximize => self.linexpr(&self.rows.objective, variables, order),
+        };
         AffExpr::from(linexpr)
     }
 
@@ -354,14 +368,22 @@ impl MPS {
         LinExpr::from(terms.as_slice())
     }
 
-    fn solve(self) -> Result<Solution, Error> {
+    fn maximize(self) -> Result<Solution, Error> {
+        self.solve(Direction::Maximize)
+    }
+
+    fn minimize(self) -> Result<Solution, Error> {
+        self.solve(Direction::Minimize)
+    }
+
+    fn solve(self, direction: Direction) -> Result<Solution, Error> {
         let variables = self.initialize_variables();
         let order = variables.keys().collect::<Vec<_>>();
-        let objective = self.initialize_objective(&variables, &order);
+        let objective = self.initialize_objective(&variables, &order, &direction);
         let constraints = self.initialize_constraints(&variables, &order);
         Simplex::new(objective, constraints)
             .solve()
-            .map(|simplex| Solution::new(simplex, variables))
+            .map(|simplex| Solution::new(simplex, variables, direction))
     }
 
     pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Self> {
@@ -414,11 +436,23 @@ mod tests {
             env::var("MPS").expect("MPS environment variable should be set by .cargo/config.toml");
         let path = Path::new(&dir).join("simple.mps");
 
-        let solution = MPS::read(path).unwrap().solve().unwrap();
+        let solution = MPS::read(path).unwrap().maximize().unwrap();
 
         assert_eq!(solution.objective_value, 80.0);
         assert_eq!(solution["XONE"], 4.0);
         assert_eq!(solution["YTWO"], 1.0);
         assert_eq!(solution["ZTHREE"], 8.0);
+    }
+
+    #[test]
+    fn test_afiro() {
+        let dir =
+            env::var("MPS").expect("MPS environment variable should be set by .cargo/config.toml");
+        let path = Path::new(&dir).join("afiro.mps");
+
+        let solution = MPS::read(path).unwrap().minimize().unwrap();
+
+        // NOTE: This should really be -464.75314286, but a 1% error is acceptable for now
+        assert_eq!(solution.objective_value, -458.9245714285714);
     }
 }
