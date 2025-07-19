@@ -24,14 +24,14 @@ requires = ["maturin>=0.14,<0.15"]
 build-backend = "maturin"
 
 [tool.maturin]
-python-source = "python-source"
+python-source = "python"
 
 [tool.isort]
 profile = "black"
 known_first_party = ["dantzig"]
 
 [tool.mypy]
-files = ["python-source/dantzig", "tests"]
+files = ["python/dantzig", "tests"]
 strict = "true"
 enable_error_code = ["ignore-without-code"]
 
