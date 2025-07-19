@@ -16,25 +16,35 @@ classifiers = [
     "Typing :: Typed"
 ]
 
+[dependency-groups]
+dev = [
+    "black",
+    "isort",
+    "pytest",
+    "mypy",
+    "ruff",
+    "sphinx",
+]
+
 [project.urls]
 repository = "https://github.com/matteosantama/dantzig"
 
 [build-system]
-requires = ["maturin>=0.14,<0.15"]
+requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
-python-source = "python-source"
+python-source = "python"
 
 [tool.isort]
 profile = "black"
 known_first_party = ["dantzig"]
 
 [tool.mypy]
-files = ["python-source/dantzig", "tests"]
+files = ["python"]
 strict = "true"
 enable_error_code = ["ignore-without-code"]
 
 [[tool.mypy.overrides]]
-module = "dantzig.rust"
+module = "dantzig.dantzig"
 ignore_missing_imports = "true"
