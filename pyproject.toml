@@ -30,7 +30,7 @@ dev = [
 repository = "https://github.com/matteosantama/dantzig"
 
 [build-system]
-requires = ["maturin>=0.14,<0.15"]
+requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
@@ -46,5 +46,5 @@ strict = "true"
 enable_error_code = ["ignore-without-code"]
 
 [[tool.mypy.overrides]]
-module = "dantzig.rust"
+module = "dantzig.dantzig"
 ignore_missing_imports = "true"

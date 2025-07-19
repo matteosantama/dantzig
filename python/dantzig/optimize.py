@@ -1,7 +1,7 @@
 import abc
 from typing import Iterable, Literal, TypeVar, cast
 
-import dantzig.rust as rs
+import dantzig.dantzig as rs
 from dantzig.model import AffExpr, Constraint, LinExpr, Variable
 
 

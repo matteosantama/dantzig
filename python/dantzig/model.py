@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import cast, overload
 
-import dantzig.rust as rs
+import dantzig.dantzig as rs
 
 
 class Variable:

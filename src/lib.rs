@@ -27,7 +27,7 @@ fn solve(objective: PyAffExpr, constraints: Vec<PyInequality>) -> PyResult<PySol
 }
 
 #[pymodule]
-fn rust(_: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn dantzig(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Variable>()?;
     m.add_class::<PyLinExpr>()?;
     m.add_class::<PyAffExpr>()?;
