@@ -18,11 +18,11 @@ jobs:
           source .venv/bin/activate
           maturin develop
           python -c "import dantzig as dz"
-      - run: black python/dantzig tests --check
-      - run: isort python/dantzig tests --check
-      - run: ruff check python/dantzig tests
-      - run: mypy
-      - run: pytest
+      - run: uv run black python/dantzig tests --check
+      - run: uv run isort python/dantzig tests --check
+      - run: uv run ruff check python/dantzig tests
+      - run: uv run mypy
+      - run: uv run pytest
   rust-checks:
     runs-on: ubuntu-latest
     steps:
