@@ -44,3 +44,7 @@ known_first_party = ["dantzig"]
 files = ["python"]
 strict = "true"
 enable_error_code = ["ignore-without-code"]
+
+[[tool.mypy.overrides]]
+module = "dantzig.dantzig"
+ignore_missing_imports = "true"
