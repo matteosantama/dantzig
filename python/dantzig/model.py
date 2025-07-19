@@ -114,12 +114,10 @@ class Variable:
         return AffExpr.from_rust_variable(self._variable)
 
     @overload
-    def __add__(self, rhs: float | int | AffExpr) -> AffExpr:
-        ...
+    def __add__(self, rhs: float | int | AffExpr) -> AffExpr: ...
 
     @overload
-    def __add__(self, rhs: Variable | LinExpr) -> LinExpr:
-        ...
+    def __add__(self, rhs: Variable | LinExpr) -> LinExpr: ...
 
     def __add__(
         self, rhs: float | int | AffExpr | Variable | LinExpr
@@ -130,12 +128,10 @@ class Variable:
         return self + lhs
 
     @overload
-    def __sub__(self, rhs: float | int | AffExpr) -> AffExpr:
-        ...
+    def __sub__(self, rhs: float | int | AffExpr) -> AffExpr: ...
 
     @overload
-    def __sub__(self, rhs: Variable | LinExpr) -> LinExpr:
-        ...
+    def __sub__(self, rhs: Variable | LinExpr) -> LinExpr: ...
 
     def __sub__(
         self, rhs: float | int | AffExpr | Variable | LinExpr
@@ -192,12 +188,10 @@ class LinExpr:
         return cast(dict[int, float], self._linexpr.map_ids_to_coefs())
 
     @overload
-    def __add__(self, rhs: float | int | AffExpr) -> AffExpr:
-        ...
+    def __add__(self, rhs: float | int | AffExpr) -> AffExpr: ...
 
     @overload
-    def __add__(self, rhs: Variable | LinExpr) -> LinExpr:
-        ...
+    def __add__(self, rhs: Variable | LinExpr) -> LinExpr: ...
 
     def __add__(
         self, rhs: float | int | AffExpr | Variable | LinExpr
@@ -214,12 +208,10 @@ class LinExpr:
         return self + lhs
 
     @overload
-    def __sub__(self, rhs: float | int | AffExpr) -> AffExpr:
-        ...
+    def __sub__(self, rhs: float | int | AffExpr) -> AffExpr: ...
 
     @overload
-    def __sub__(self, rhs: Variable | LinExpr) -> LinExpr:
-        ...
+    def __sub__(self, rhs: Variable | LinExpr) -> LinExpr: ...
 
     def __sub__(
         self, rhs: float | int | AffExpr | Variable | LinExpr
