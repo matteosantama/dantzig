@@ -16,6 +16,16 @@ classifiers = [
     "Typing :: Typed"
 ]
 
+[dependency-groups]
+dev = [
+    "black",
+    "isort",
+    "pytest",
+    "mypy",
+    "ruff",
+    "sphinx",
+]
+
 [project.urls]
 repository = "https://github.com/matteosantama/dantzig"
 
