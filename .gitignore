@@ -8,4 +8,4 @@ target/
 python/dantzig/dantzig.abi3.so
 
 python/dantzig/__pycache__/
-tests/__pycache__/
+python/tests/__pycache__/
