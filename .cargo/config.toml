@@ -1,0 +1,2 @@
+[env]
+MPS = { value = "assets/MPS", relative = true }
